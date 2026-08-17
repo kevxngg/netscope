@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %} - Trafico{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Trafico por dispositivo</h1><p>Subida (ambar) y bajada (verde) en vivo.</p></div>
+  <div class="actions"><button class="btn ghost" onclick="resetTraffic()">Reiniciar contadores</button></div>
+</div>
+<div class="card" style="margin-bottom:16px">
+  <div class="card-h"><span class="t">Trafico total (en vivo)</span><span class="c" id="rateTxt">-</span></div>
+  <div style="padding:14px 16px"><canvas id="chart" height="120" style="width:100%;display:block"></canvas></div>
+</div>
+<div class="card">
+  <div class="card-h"><span class="t">Por dispositivo</span><span class="c" id="trafCnt">-</span></div>
+  <div id="traf"><div class="empty">esperando paquetes...</div></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/traffic.js') }}"></script>{% endblock %}

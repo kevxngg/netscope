@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %} - Dispositivos{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Arbol de la red</h1><p>Router como raiz y cada equipo como rama. Clic en un equipo para ver su detalle.</p></div>
+  <div class="actions"><button class="btn primary" id="scanBtn" onclick="scanNow()">Escanear red</button></div>
+</div>
+<div class="card">
+  <div class="card-h"><span class="t">Dispositivos conectados</span><span class="c" id="devCnt">-</span></div>
+  <div class="tree" id="tree"><div class="empty">escaneando la red...</div></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/devices.js') }}"></script>{% endblock %}
