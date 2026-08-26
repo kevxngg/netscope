@@ -1,0 +1,20 @@
+# Entorno virtual (lo crea run.py; no se sube)
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Empaquetado (PyInstaller)
+build/
+dist/
+*.spec
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Base de datos local
+netscope.db

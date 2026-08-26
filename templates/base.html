@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetScope{% block title %}{% endblock %}</title>
+<link href="https://fonts.cdnfonts.com/css/sf-pro-display" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/sf-pro-text" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <button class="menu-btn" id="menuBtn" aria-label="Menu">&#9776;</button>
+    <a href="/" class="brand"><img class="logo-img" src="{{ url_for('static', filename='img/logo-mark.png') }}" alt="NetScope"><span class="brand-txt">Net<b>Scope</b></span></a>
+  </div>
+  <div class="topbar-right">
+    <span class="pill" id="statusPill"><span class="dot"></span><span id="statusTxt">en vivo</span></span>
+    <button class="theme-toggle" id="themeToggle">Tema</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="Secciones">
+    <div class="side-group">General</div>
+    <a class="side-link {{ 'is-active' if seccion=='resumen' }}" href="/">
+      <span class="lbl">Resumen</span>
+    </a>
+
+    <div class="side-group">Red</div>
+    <a class="side-link {{ 'is-active' if seccion=='devices' }}" href="/devices">
+      <span class="lbl">Dispositivos</span><span class="side-count" data-count="devices">-</span>
+    </a>
+    <a class="side-link {{ 'is-active' if seccion=='traffic' }}" href="/traffic">
+      <span class="lbl">Trafico</span><span class="side-count" data-count="traffic">-</span>
+    </a>
+    <a class="side-link {{ 'is-active' if seccion=='speed' }}" href="/speed">
+      <span class="lbl">Velocidad</span>
+    </a>
+
+    <a class="side-link {{ 'is-active' if seccion=='history' }}" href="/history">
+      <span class="lbl">Historial</span>
+    </a>
+
+    <div class="side-group">Sistema</div>
+    <a class="side-link {{ 'is-active' if seccion=='system' }}" href="/system">
+      <span class="lbl">Estado</span><span class="side-count alert" data-count="inspecting" style="display:none">0</span>
+    </a>
+    <a class="side-link {{ 'is-active' if seccion=='settings' }}" href="/settings">
+      <span class="lbl">Ajustes</span>
+    </a>
+  </nav>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script src="{{ url_for('static', filename='js/common.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

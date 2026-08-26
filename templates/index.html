@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetScope</title>
+<style>
+  :root{
+    --bg:#070a07; --panel:#0b100b; --panel-2:#080c08;
+    --border:#15251a; --border-soft:#101c14;
+    --green:#3ef08f; --green-dim:#2aa564; --green-faint:#16603a;
+    --text:#bcd6c6; --muted:#5f8070; --faint:#31463a;
+    --amber:#c9a24a; --red:#e0564a;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code","Consolas","DejaVu Sans Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:var(--mono); font-size:13px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; padding:20px; min-height:100%;
+  }
+  a{color:var(--green)}
+
+  /* cabecera */
+  header{border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px}
+  .title-row{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap}
+  h1{margin:0; font-size:16px; font-weight:600; letter-spacing:2px; color:var(--green)}
+  h1::before{content:"# "; color:var(--green-dim)}
+  .tag{font-size:11px; color:var(--muted); letter-spacing:1px}
+  .meta{margin-top:8px; display:flex; gap:26px; flex-wrap:wrap; font-size:11px; color:var(--muted)}
+  .meta .k{color:var(--faint)}
+  .meta .v{color:var(--text)}
+  .meta .on{color:var(--green)}
+  .meta .off{color:var(--red)}
+
+  /* preflight (estado del sistema) */
+  .preflight{
+    display:flex; gap:18px; flex-wrap:wrap; align-items:center;
+    padding:9px 12px; margin-bottom:14px;
+    border:1px solid var(--border); border-radius:5px; background:var(--panel);
+    font-size:11.5px;
+  }
+  .preflight .chip{display:flex; gap:6px; align-items:center; color:var(--muted)}
+  .preflight .chip b{color:var(--text); font-weight:600}
+  .preflight .st{font-size:10px; letter-spacing:.5px}
+  .preflight .st.ok{color:var(--green)}
+  .preflight .st.no{color:var(--red)}
+  .preflight .hints{flex-basis:100%; color:var(--amber); font-size:11px; margin-top:2px}
+  .preflight .hints div{margin-top:2px}
+
+  /* controles */
+  .bar{display:flex; gap:8px; align-items:center; margin-bottom:16px; flex-wrap:wrap}
+  button{
+    font-family:var(--mono); font-size:12px; letter-spacing:.5px;
+    background:transparent; color:var(--text);
+    border:1px solid var(--border); border-radius:3px;
+    padding:7px 12px; cursor:pointer; transition:border-color .12s, color .12s;
+  }
+  button:hover{border-color:var(--green-dim); color:var(--green)}
+  button:active{transform:translateY(1px)}
+  button.on{border-color:var(--green); color:var(--green)}
+  button.danger:hover{border-color:var(--red); color:var(--red)}
+  button:disabled{opacity:.45; cursor:progress}
+  .live{margin-left:auto; font-size:11px; color:var(--muted); display:flex; align-items:center; gap:7px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 7px var(--green);animation:blink 1.6s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+  @media (prefers-reduced-motion:reduce){.dot{animation:none}}
+
+  .cols{display:grid; grid-template-columns:1.25fr 1fr; gap:16px}
+  @media (max-width:980px){.cols{grid-template-columns:1fr}}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:6px; overflow:hidden}
+  .panel > .ph{
+    padding:10px 14px; border-bottom:1px solid var(--border-soft);
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted);
+  }
+  .panel > .ph .cnt{color:var(--green); letter-spacing:0}
+
+  /* arbol */
+  .tree{padding:10px 14px; font-size:12.5px}
+  .root{color:var(--green); margin-bottom:2px}
+  .root .rip{color:var(--green)}
+  .node{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .row{
+    display:grid; grid-template-columns:22px 128px 1fr 118px auto; gap:8px;
+    align-items:center; padding:4px 0; border-bottom:1px solid var(--border-soft); cursor:pointer;
+  }
+  .row:last-of-type{border-bottom:none}
+  .row:hover{background:#0e160f}
+  .branch{color:var(--green-faint); user-select:none}
+  .rip{color:var(--green)}
+  .rname{color:var(--text); overflow:hidden; text-overflow:ellipsis}
+  .rvendor{color:var(--muted); overflow:hidden; text-overflow:ellipsis}
+  .self{color:var(--amber)}
+  .actions{display:flex; gap:6px; justify-self:end}
+  .mini{font-size:10.5px; padding:3px 7px}
+  .mini.act{border-color:var(--green); color:var(--green)}
+
+  .detail{grid-column:1/-1; padding:8px 0 10px 30px; display:none}
+  .detail.open{display:block}
+  .detail .dl{color:var(--faint); font-size:10.5px; letter-spacing:1px; text-transform:uppercase; margin:8px 0 4px}
+  .detail .mac{color:var(--muted)}
+  .kv{color:var(--text)} .kv .os{color:var(--green)}
+  .ports{margin:2px 0 0}
+  .port{color:var(--text)} .port .p{color:var(--green)} .port .s{color:var(--muted)}
+  .doms .d{color:var(--text)} .doms .c{color:var(--faint)}
+  .warn{color:var(--red)}
+  .scanning{color:var(--amber)}
+
+  /* trafico */
+  .trow{padding:9px 14px; border-bottom:1px solid var(--border-soft)}
+  .trow:last-child{border-bottom:none}
+  .trow:hover{background:#0e160f}
+  .tt{display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:6px}
+  .tn{color:var(--text)} .tn .tip{color:var(--green); font-size:11px; margin-left:6px}
+  .tn .ext{color:var(--faint); font-size:11px; margin-left:6px}
+  .ttot{color:var(--muted); font-size:11.5px}
+  .gbar{height:7px; border-radius:4px; background:#0a120c; overflow:hidden; display:flex}
+  .gbar .s{background:var(--amber)} .gbar .r{background:var(--green)}
+  .tleg{display:flex; gap:16px; margin-top:5px; font-size:10px; color:var(--faint)}
+  .tleg .u b{color:var(--amber)} .tleg .d b{color:var(--green)}
+
+  .empty{padding:22px 14px; color:var(--faint); text-align:center; font-size:12px}
+  .note{margin-top:16px; padding:11px 14px; border:1px dashed var(--border); border-radius:5px; color:var(--muted); font-size:11.5px; line-height:1.6}
+  .note b{color:var(--amber)}
+  footer{margin-top:18px; color:var(--faint); font-size:10.5px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-row">
+    <h1>NETSCOPE</h1>
+    <span class="tag">consola de red local</span>
+  </div>
+  <div class="meta" id="meta"></div>
+</header>
+
+<div class="preflight" id="preflight"></div>
+
+<div class="bar">
+  <button class="on" id="scanBtn" onclick="scanNow()">[ escanear red ]</button>
+  <button class="danger" onclick="resetTraffic()">[ reiniciar contadores ]</button>
+  <div class="live"><span class="dot"></span><span>captura en vivo</span></div>
+</div>
+
+<div class="cols">
+  <section class="panel">
+    <div class="ph"><span>arbol de la red</span><span class="cnt" id="devCnt">--</span></div>
+    <div class="tree" id="tree"><div class="empty">escaneando la red...</div></div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><span>trafico por dispositivo</span><span class="cnt" id="trafCnt">--</span></div>
+    <div id="traf"><div class="empty">esperando paquetes...</div></div>
+  </section>
+</div>
+
+<div class="note">
+  <b>intercepcion:</b> el boton [inspect] de cada equipo activa el modo intermediario
+  (ARP) para ver TODO su trafico y a que dominios habla. HTTPS sigue cifrado: veras
+  a donde habla cada equipo, no el contenido. Usalo solo en tu propia red. Al salir,
+  las tablas ARP se restauran solas.
+</div>
+
+<footer>NETSCOPE // 127.0.0.1:5000 // solo para redes propias</footer>
+
+<script>
+const state = { devices:[], gateway:"", inspecting:new Set(), open:new Set(), deep:{}, scanning:new Set() };
+
+const fmt = b => { if(!b) return "0 B"; const u=["B","KB","MB","GB","TB"]; const i=Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(i?1:0)+" "+u[i]; };
+const esc = s => (s||"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ipNum = ip => ip.split(".").map(Number).reduce((s,o)=>s*256+o,0);
+
+async function loadSystem(){
+  try{
+    const r = await fetch("/api/system"); const s = await r.json();
+    const st = (o)=> o.ok ? '<span class="st ok">OK</span>' : '<span class="st no">FALTA</span>';
+    const chips = [
+      `<span class="chip"><b>${esc(s.os.name)}</b> · Python ${esc(s.python)}</span>`,
+      `<span class="chip">permisos ${s.admin?'<span class="st ok">root/admin</span>':'<span class="st no">SIN privilegios</span>'}</span>`,
+      `<span class="chip">captura ${st(s.capture)}</span>`,
+      `<span class="chip">nmap ${st(s.nmap)}</span>`,
+      `<span class="chip">netbios ${st(s.netbios)}</span>`,
+    ].join("");
+    let hints = "";
+    if(!s.admin){
+      hints += `<div>${s.os.id==="windows"?"Abre PowerShell como Administrador.":"Ejecuta con: sudo python3 app.py"}</div>`;
+    }
+    ["capture","nmap","netbios"].forEach(k=>{ if(!s[k].ok && s[k].hint) hints += `<div>${esc(k)}: ${esc(s[k].hint)}</div>`; });
+    document.getElementById("preflight").innerHTML = chips + (hints?`<div class="hints">${hints}</div>`:"");
+  }catch(e){}
+}
+
+async function loadMeta(){
+  try{
+    const r = await fetch("/api/networks"); const d = await r.json();
+    const nets = (d.networks||[]).map(n=>`<span><span class="k">${n.iface}</span> <span class="v">${n.ip}</span> ${n.cidr}</span>`).join("");
+    document.getElementById("meta").innerHTML = nets;
+  }catch(e){}
+}
+
+async function loadStatus(){
+  try{ const r=await fetch("/api/inspect/status"); const d=await r.json();
+       state.inspecting = new Set(d.targets||[]); }catch(e){}
+}
+
+async function loadDevices(){
+  try{
+    const r = await fetch("/api/devices"); const d = await r.json();
+    state.devices = (d.devices||[]).slice().sort((a,b)=>ipNum(a.ip)-ipNum(b.ip));
+    state.gateway = d.gateway||"";
+    document.getElementById("devCnt").textContent = state.devices.length+" equipos";
+    renderTree();
+  }catch(e){}
+}
+
+function renderTree(){
+  const el = document.getElementById("tree");
+  if(!state.devices.length){ el.innerHTML=`<div class="empty">sin dispositivos. pulsa [escanear red].</div>`; return; }
+  const gw = state.gateway;
+  const branches = state.devices.filter(d=>d.ip!==gw);
+  const gwDev = state.devices.find(d=>d.ip===gw);
+  let html = `<div class="root">[router] <span class="rip">${gw||"?"}</span>  ${gwDev?esc(gwDev.vendor||""):""}</div>`;
+  branches.forEach((dv,i)=>{
+    const last = i===branches.length-1;
+    const b = last ? "└─" : "├─";
+    const insp = state.inspecting.has(dv.ip);
+    const nm = dv.name && dv.name!=="(sin nombre)" ? esc(dv.name) : '<span style="color:var(--faint)">(sin nombre)</span>';
+    html += `
+      <div class="node">
+        <div class="row" onclick="toggleOpen('${dv.ip}')">
+          <span class="branch">${b}</span>
+          <span class="rip">${dv.ip}</span>
+          <span class="rname">${nm}${dv.is_self?' <span class="self">[este equipo]</span>':''}</span>
+          <span class="rvendor">${esc(dv.vendor||"")}</span>
+          <span class="actions" onclick="event.stopPropagation()">
+            ${dv.is_self?'' :
+              `<button class="mini ${insp?'act':''}" onclick="toggleInspect('${dv.ip}')">${insp?'[● inspect]':'[ inspect ]'}</button>`}
+            <button class="mini" onclick="runDeep('${dv.ip}')">[ scan ]</button>
+          </span>
+        </div>
+        <div class="detail ${state.open.has(dv.ip)?'open':''}" id="det-${cssid(dv.ip)}">
+          ${renderDetail(dv)}
+        </div>
+      </div>`;
+  });
+  el.innerHTML = html;
+}
+
+function renderDetail(dv){
+  let h = `<div class="dl">identidad</div>
+           <div class="kv">mac <span class="mac">${dv.mac}</span> · iface ${esc(dv.iface||"")}</div>`;
+  // deep scan
+  const dp = state.deep[dv.ip];
+  h += `<div class="dl">escaneo profundo (nmap)</div>`;
+  if(state.scanning.has(dv.ip)){ h += `<div class="scanning">analizando... puede tardar</div>`; }
+  else if(!dp){ h += `<div style="color:var(--faint)">pulsa [ scan ] para analizar SO y puertos.</div>`; }
+  else if(!dp.ok){ h += `<div class="warn">${esc(dp.error||"error")}</div>`; }
+  else {
+    h += `<div class="kv">SO: <span class="os">${esc(dp.os||"desconocido")}</span>${dp.os_accuracy?` (${dp.os_accuracy}%)`:""}</div>`;
+    if(dp.ports && dp.ports.length){
+      h += `<div class="ports">`;
+      dp.ports.forEach(p=>{ h += `<div class="port"><span class="p">${p.port}/${p.proto}</span> <span class="s">${esc(p.service)} ${esc(p.product)} ${esc(p.version)}</span></div>`; });
+      h += `</div>`;
+    } else { h += `<div style="color:var(--faint)">sin puertos abiertos detectados.</div>`; }
+  }
+  // dominios (placeholder, se llena async al abrir)
+  h += `<div class="dl">dominios que consulta</div><div class="doms" id="dom-${cssid(dv.ip)}"><span style="color:var(--faint)">${state.inspecting.has(dv.ip)?'capturando...':'activa [inspect] para capturar sus dominios.'}</span></div>`;
+  return h;
+}
+
+async function loadDomains(ip){
+  try{
+    const r = await fetch("/api/domains?ip="+encodeURIComponent(ip)); const d = await r.json();
+    const box = document.getElementById("dom-"+cssid(ip)); if(!box) return;
+    if(!d.domains || !d.domains.length){ box.innerHTML = `<span style="color:var(--faint)">${state.inspecting.has(ip)?'aun sin consultas DNS...':'activa [inspect] para capturar sus dominios.'}</span>`; return; }
+    box.innerHTML = d.domains.map(x=>`<div><span class="d">${esc(x.domain)}</span> <span class="c">×${x.count}</span></div>`).join("");
+  }catch(e){}
+}
+
+function cssid(ip){ return ip.replace(/\./g,"-"); }
+
+function toggleOpen(ip){
+  if(state.open.has(ip)) state.open.delete(ip); else { state.open.add(ip); loadDomains(ip); }
+  renderTree();
+}
+
+async function toggleInspect(ip){
+  const on = state.inspecting.has(ip);
+  const url = on ? "/api/inspect/stop" : "/api/inspect/start";
+  try{
+    const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ip})});
+    const d = await r.json();
+    if(!d.ok){ alert("Intercepcion: "+(d.error||"error")); }
+    state.inspecting = new Set(d.inspecting||[]);
+    renderTree();
+  }catch(e){ alert("No se pudo cambiar la intercepcion."); }
+}
+
+async function runDeep(ip){
+  if(!state.open.has(ip)){ state.open.add(ip); }
+  state.scanning.add(ip); renderTree();
+  try{
+    const r = await fetch("/api/deepscan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ip})});
+    state.deep[ip] = await r.json();
+  }catch(e){ state.deep[ip] = {ok:false,error:"fallo la peticion"}; }
+  state.scanning.delete(ip); renderTree();
+}
+
+async function loadTraffic(){
+  try{
+    const r = await fetch("/api/traffic"); const d = await r.json();
+    const rows = d.traffic||[];
+    document.getElementById("trafCnt").textContent = rows.length? rows.length+" IPs" : "--";
+    const el = document.getElementById("traf");
+    if(!rows.length){ el.innerHTML=`<div class="empty">esperando paquetes...</div>`; return; }
+    const max = Math.max(...rows.map(t=>t.bytes),1);
+    el.innerHTML = rows.slice(0,40).map(t=>{
+      const w = Math.max(2,(t.bytes/max)*100);
+      const tot = t.bytes||1;
+      const sp=(t.sent_bytes/tot)*100, rp=(t.recv_bytes/tot)*100;
+      const label = (t.name && t.name!=="(sin nombre)") ? esc(t.name) : (t.vendor?esc(t.vendor):"IP externa/desconocida");
+      return `<div class="trow">
+        <div class="tt">
+          <div class="tn">${label}<span class="tip">${t.ip}</span>${t.is_local?'':' <span class="ext">externa</span>'}</div>
+          <div class="ttot">${fmt(t.bytes)} · ${t.packets} pkt</div>
+        </div>
+        <div class="gbar" style="width:${w}%"><div class="s" style="width:${sp}%"></div><div class="r" style="width:${rp}%"></div></div>
+        <div class="tleg"><span class="u"><b>▲</b> envia ${fmt(t.sent_bytes)}</span><span class="d"><b>▼</b> recibe ${fmt(t.recv_bytes)}</span></div>
+      </div>`;
+    }).join("");
+  }catch(e){}
+}
+
+async function scanNow(){
+  const b=document.getElementById("scanBtn"); b.disabled=true; b.textContent="[ escaneando... ]";
+  try{ await fetch("/api/scan",{method:"POST"}); await loadDevices(); }catch(e){}
+  finally{ b.disabled=false; b.textContent="[ escanear red ]"; }
+}
+async function resetTraffic(){ await fetch("/api/traffic/reset",{method:"POST"}); loadTraffic(); }
+
+// arranque + polling
+loadSystem(); loadMeta(); loadStatus().then(loadDevices); loadTraffic();
+setInterval(async ()=>{ await loadStatus(); loadDevices(); }, 8000);
+setInterval(loadTraffic, 2000);
+setInterval(()=>{ state.open.forEach(loadDomains); }, 4000);
+</script>
+</body>
+</html>
