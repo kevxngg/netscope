@@ -97,22 +97,75 @@ def _get_vendor(mac: str) -> str:
 
 
 # --- topologia local -------------------------------------------------------- #
+# Interfaces que NO son la red fisica real (WSL, VPNs, virtualizacion, etc.).
+# Se descartan por nombre como red de seguridad; el filtro principal es el
+# gateway (ver _select_networks).
+_VIRTUAL_HINTS = ("loopback", "vethernet", "wsl", "vmware", "virtualbox",
+                  "vbox", "tailscale", "tap-windows", "openvpn", "tun",
+                  "wintun", "bluetooth", "hyper-v", "docker")
+
+
+def _is_link_local(ip: str) -> bool:
+    # 169.254.x.x = APIPA: la interfaz NO consiguio IP por DHCP -> sin red real.
+    return ip.startswith("169.254.")
+
+
+def _looks_virtual(iface_name: str) -> bool:
+    n = iface_name.lower()
+    return any(h in n for h in _VIRTUAL_HINTS)
+
+
+def _select_networks(candidates, gateway):
+    """
+    Elige QUE redes escanear de entre todas las interfaces del equipo.
+
+    El problema que resuelve: una PC con WSL, VPN, Tailscale, Bluetooth, etc.
+    tiene muchas interfaces IPv4. Escanearlas todas hace que el escaneo se vaya
+    a una red virtual VACIA (p.ej. la de WSL) y devuelva cero dispositivos.
+
+    Estrategia, en orden:
+      1) Quedarse con la red que CONTIENE el gateway (la que tiene internet).
+      2) Si no se sabe el gateway, descartar interfaces virtuales por nombre.
+      3) Ultimo recurso: lo que haya.
+    """
+    parsed = []
+    for c in candidates:
+        iface, ip, mask = c["iface"], c["ip"], c["netmask"]
+        if not mask or ip.startswith("127.") or _is_link_local(ip):
+            continue
+        try:
+            net = ipaddress.IPv4Network(f"{ip}/{mask}", strict=False)
+        except ValueError:
+            continue
+        if net.num_addresses > 4096:
+            continue
+        parsed.append((iface, net, ip))
+
+    if gateway:
+        try:
+            gw = ipaddress.IPv4Address(gateway)
+            primary = [(i, str(n), ip) for (i, n, ip) in parsed if gw in n]
+            if primary:
+                return primary
+        except ValueError:
+            pass
+
+    real = [(i, str(n), ip) for (i, n, ip) in parsed if not _looks_virtual(i)]
+    if real:
+        return real
+
+    return [(i, str(n), ip) for (i, n, ip) in parsed]
+
+
 def get_local_networks():
-    nets = []
+    gw = get_gateway_ip()
+    candidates = []
     for iface, addrs in psutil.net_if_addrs().items():
         for addr in addrs:
             if addr.family == socket.AF_INET:
-                ip, mask = addr.address, addr.netmask
-                if ip.startswith("127.") or not mask:
-                    continue
-                try:
-                    net = ipaddress.IPv4Network(f"{ip}/{mask}", strict=False)
-                except ValueError:
-                    continue
-                if net.num_addresses > 4096:
-                    continue
-                nets.append((iface, str(net), ip))
-    return nets
+                candidates.append({"iface": iface, "ip": addr.address,
+                                   "netmask": addr.netmask})
+    return _select_networks(candidates, gw)
 
 
 def get_gateway_ip() -> str:
