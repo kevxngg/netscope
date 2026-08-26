@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %} - Resumen{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Resumen</h1><p>Estado general de tu red y del sistema.</p></div>
+  <div class="actions"><button class="btn primary" onclick="location.href='/devices'">Ver dispositivos</button></div>
+</div>
+
+<div class="stats-row">
+  <div class="stat"><div class="k">Dispositivos</div><div class="v num" id="sDevices">-</div></div>
+  <div class="stat"><div class="k">IPs con trafico</div><div class="v num" id="sTraffic">-</div></div>
+  <div class="stat"><div class="k">Interceptando</div><div class="v num" id="sInspect">-</div></div>
+  <div class="stat"><div class="k">nmap</div><div class="v" id="sNmap">-</div></div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="card-h"><span class="t">Red Wi-Fi</span><span class="c" id="wifiState">-</span></div>
+  <div class="wifi-grid" id="wifiBox"><div class="v">cargando...</div></div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-h"><span class="t">Sistema</span></div>
+    <div style="padding:14px 16px" id="sysBox" class="kv">cargando...</div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="t">Router</span></div>
+    <div style="padding:14px 16px" class="kv"><span id="sGateway">-</span></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/overview.js') }}"></script>{% endblock %}

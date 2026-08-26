@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %} - Sistema{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Estado del sistema</h1><p>Sistema operativo, permisos y dependencias.</p></div></div>
+<div class="card"><div style="padding:8px 16px 16px" id="sys" class="kv">cargando...</div></div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/system.js') }}"></script>{% endblock %}
