@@ -1,19 +1,46 @@
 const IP = window.DEVICE_IP;
-let inspecting=false, lastSeq=0, logStarted=false;
+let inspecting=false, lastSeq=0, logStarted=false, logEvents=[];
+
+function deviceName(device){ return device.custom_name || (device.name&&device.name!=="(sin nombre)"?device.name:device.ip); }
+
+function renderMetrics(device){
+  const metrics=document.getElementById("deviceMetrics");
+  if(metrics) metrics.innerHTML=`<div><span>Total</span><b>${NS.fmt(device.traffic||0)}</b></div><div><span>Enviado</span><b>${NS.fmt(device.sent_bytes||0)}</b></div><div><span>Recibido</span><b>${NS.fmt(device.recv_bytes||0)}</b></div>`;
+  const state=document.getElementById("deviceState");
+  if(state){ state.textContent=device.online?"conectado":"ausente"; state.classList.toggle("online",!!device.online); }
+  const presence=document.getElementById("presenceBox");
+  if(presence) presence.textContent=device.online?"Activo en el último escaneo":"No respondió al último escaneo";
+}
+
+function renderHistory(history){
+  const box=document.getElementById("historyBox"), count=document.getElementById("historyCount");
+  if(count) count.textContent=history.length+" eventos";
+  if(!history.length){ box.innerHTML='<div class="empty">sin eventos registrados para este dispositivo.</div>'; return; }
+  box.innerHTML=history.slice(0,10).map(e=>`<div class="history-row"><span class="time num">${NS.hora(e.ts)}</span><span class="history-type">${NS.esc(e.type||"evento")}</span><span>${NS.esc(e.detail||e.ip||"-")}</span></div>`).join("");
+}
+
+function renderLog(){
+  const filter=document.getElementById("logFilter")?.value||"all";
+  const events=filter==="all"?logEvents:logEvents.filter(e=>e.kind===filter);
+  const box=document.getElementById("log");
+  if(!events.length){ box.innerHTML='<div class="log-empty">sin eventos para este filtro.</div>'; return; }
+  box.innerHTML=events.map(e=>`<div class="row"><span class="time num">${NS.hora(e.ts)}</span><span class="kind ${e.kind}">${e.kind}</span><span class="val">${NS.esc(e.value)}</span></div>`).join("");
+}
 
 async function loadDetail(){
   const d = await NS.get("/api/device/"+IP);
   if(!d.ok){ document.getElementById("detail").textContent="dispositivo no encontrado (escanea primero)"; return; }
   const dv=d.device; inspecting=d.inspecting;
-  const shown = dv.custom_name || (dv.name&&dv.name!=="(sin nombre)"?dv.name:dv.ip);
+  const shown = deviceName(dv);
   document.getElementById("dTitle").textContent = shown;
+  document.getElementById("identityHint").textContent = dv.trusted?"dispositivo confiable":"pendiente de revisar";
   const ni=document.getElementById("nameInput"); if(ni && !ni.value) ni.value = dv.custom_name || "";
   const ex=document.getElementById("exportLog"); if(ex) ex.href="/api/export/log.csv?ip="+encodeURIComponent(IP);
   document.getElementById("detail").innerHTML =
-    `<div class="dl">identidad</div>
-     <div>IP <span class="os num">${dv.ip}</span> &middot; mac <span class="mac num">${dv.mac}</span></div>
-     <div>fabricante ${NS.esc(dv.vendor||"-")} &middot; iface ${NS.esc(dv.iface||"-")}</div>
-     <div id="deepBox"><div class="dl">escaneo profundo (nmap)</div><div style="color:var(--faint)">pulsa "Escaneo profundo".</div></div>`;
+    `<div class="identity-grid"><div><span>IP</span><b class="os num">${dv.ip}</b></div><div><span>MAC</span><b class="mac num">${NS.esc(dv.mac||"-")}</b></div><div><span>Fabricante</span><b>${NS.esc(dv.vendor||"-")}</b></div><div><span>Interfaz</span><b>${NS.esc(dv.iface||"-")}</b></div><div><span>Visto</span><b>${dv.seen_count||0} veces</b></div><div><span>Estado</span><b>${dv.online?"conectado":"ausente"}</b></div></div>
+     <div class="dl">escaneo profundo (nmap)</div><div class="device-note">Detecta sistema operativo, puertos y servicios cuando pulses el botón.</div>
+     <div id="deepBox"><div style="color:var(--faint)">pulsa "Escaneo profundo".</div></div>`;
+  renderMetrics(dv); renderHistory(d.history||[]);
   updateInspectBtn();
 }
 
@@ -54,18 +81,9 @@ async function pollLog(){
     const d = await NS.get(`/api/log?ip=${encodeURIComponent(IP)}&since=${lastSeq}`);
     const ev = d.events||[];
     if(ev.length){
-      const box=document.getElementById("log");
-      if(!logStarted){ box.innerHTML=""; logStarted=true; }
-      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-      const frag=document.createDocumentFragment();
-      ev.forEach(e=>{
-        const row=document.createElement("div"); row.className="row";
-        row.innerHTML=`<span class="time num">${NS.hora(e.ts)}</span><span class="kind ${e.kind}">${e.kind}</span><span class="val">${NS.esc(e.value)}</span>`;
-        frag.appendChild(row);
-      });
-      box.appendChild(frag);
+      logEvents=logEvents.concat(ev).slice(-300);
       lastSeq = d.latest;
-      if(atBottom) box.scrollTop = box.scrollHeight;
+      renderLog();
     }
   }catch(e){}
 }
@@ -73,7 +91,7 @@ async function pollLog(){
 async function clearLog(){
   await NS.post("/api/log/reset",{ip:IP});
   lastSeq=0; logStarted=false;
-  document.getElementById("log").innerHTML=`<div class="log-empty">Log limpiado. Apareceran las nuevas conexiones...</div>`;
+  logEvents=[]; renderLog();
 }
 
 loadDetail();
@@ -104,3 +122,4 @@ async function toggleBlock(){
   blocked = (d.blocked||[]).includes(IP); updateBlockBtn();
 }
 refreshBlock();
+document.getElementById("logFilter").addEventListener("change",renderLog);
