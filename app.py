@@ -269,6 +269,10 @@ def api_devices():
     for saved in storage.all_devices():
         mac = (saved.get("mac") or "").lower()
         device = dict(current.get(mac, saved))
+        current_name = device.get("name", "")
+        saved_name = saved.get("auto_name", "")
+        if not scanner.usable_name(current_name):
+            device["name"] = saved_name if scanner.usable_name(saved_name) else "(sin nombre)"
         device.update({"mac": mac or device.get("mac", ""),
                        "custom_name": saved.get("custom_name", "") or device.get("custom_name", ""),
                        "trusted": bool(saved.get("trusted", 0)),
@@ -285,6 +289,8 @@ def api_devices():
     for device in _last_scan["devices"]:
         if (device.get("mac") or "").lower() not in known_macs:
             current_device = dict(device)
+            if not scanner.usable_name(current_device.get("name")):
+                current_device["name"] = "(sin nombre)"
             current_device.update({"trusted": False, "online": True,
                                    "seen_count": 0, "traffic": traffic.get(device.get("ip"), {}).get("bytes", 0),
                                    "sent_bytes": traffic.get(device.get("ip"), {}).get("sent_bytes", 0),
