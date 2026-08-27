@@ -114,7 +114,10 @@ def _background_scan():
 
 
 def _device_by_ip(ip):
-    return next((d for d in _last_scan["devices"] if d["ip"] == ip), None)
+    current = next((d for d in _last_scan["devices"] if d["ip"] == ip), None)
+    if current:
+        return current
+    return next((d for d in storage.all_devices() if d.get("ip") == ip), None)
 
 
 def _sync_inspected():
@@ -306,7 +309,23 @@ def api_device(ip):
     d = _device_by_ip(ip)
     if not d:
         return jsonify({"ok": False, "error": "dispositivo no encontrado"}), 404
-    return jsonify({"ok": True, "device": d,
+    device = dict(d)
+    saved = storage.get_device(d.get("mac", "")) or {}
+    if not scanner.usable_name(device.get("name")):
+        saved_name = saved.get("auto_name", "")
+        device["name"] = saved_name if scanner.usable_name(saved_name) else "(sin nombre)"
+    stats = next((t for t in monitor.snapshot() if t["ip"] == ip), {})
+    device.update({"custom_name": saved.get("custom_name", "") or d.get("custom_name", ""),
+                   "trusted": bool(saved.get("trusted", d.get("trusted", 0))),
+                   "first_seen": saved.get("first_seen", d.get("first_seen")),
+                   "last_seen": saved.get("last_seen", d.get("last_seen")),
+                   "seen_count": saved.get("seen_count", d.get("seen_count", 0)),
+                   "online": d in _last_scan["devices"],
+                   "traffic": stats.get("bytes", 0),
+                   "sent_bytes": stats.get("sent_bytes", 0),
+                   "recv_bytes": stats.get("recv_bytes", 0)})
+    history = [event for event in storage.list_events(200) if event.get("ip") == ip]
+    return jsonify({"ok": True, "device": device, "history": history,
                     "inspecting": ip in interceptor.list_targets()})
 
 @app.route("/api/scan", methods=["POST"])
