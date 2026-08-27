@@ -13,8 +13,35 @@
   <div class="stat"><div class="k">nmap</div><div class="v" id="sNmap">-</div></div>
 </div>
 
-<div class="card" style="margin-bottom:16px">
-  <div class="card-h"><span class="t">Red Wi-Fi</span><span class="c" id="wifiState">-</span></div>
+<div class="overview-grid">
+  <div class="card overview-panel">
+    <div class="card-h"><span class="t">Salud de la conexión</span><span class="c" id="internetState">-</span></div>
+    <div class="metric-grid" id="healthBox"><div><span>Gateway</span><b>-</b></div><div><span>Latencia</span><b>-</b></div><div><span>Pérdida</span><b>-</b></div></div>
+  </div>
+  <div class="card overview-panel">
+    <div class="card-h"><span class="t">Tráfico acumulado</span><span class="c">desde el arranque</span></div>
+    <div class="metric-grid" id="trafficBox"><div><span>Total</span><b>-</b></div><div><span>Enviado</span><b>-</b></div><div><span>Recibido</span><b>-</b></div><div><span>Subida ahora</span><b>-</b></div><div><span>Bajada ahora</span><b>-</b></div><div><span>Pico</span><b>-</b></div></div>
+  </div>
+</div>
+
+<div class="overview-grid">
+  <div class="card overview-panel">
+    <div class="card-h"><span class="t">Dispositivos</span><span class="c">estado de la red</span></div>
+    <div class="metric-grid" id="deviceInfoBox"><div><span>Desconocidos</span><b>-</b></div><div><span>Nuevos hoy</span><b>-</b></div><div><span>Con nombre</span><b>-</b></div></div>
+  </div>
+  <div class="card overview-panel">
+    <div class="card-h"><span class="t">Seguridad y sistema</span><span class="c" id="securityState">-</span></div>
+    <div class="status-list" id="securityBox"></div>
+  </div>
+</div>
+
+<div class="card overview-panel recent-panel">
+  <div class="card-h"><span class="t">Actividad reciente</span><a class="c" href="/history">ver historial</a></div>
+  <div id="eventsBox"><div class="empty">sin eventos recientes</div></div>
+</div>
+
+<div class="card wifi-card" style="margin-bottom:16px">
+  <div class="card-h"><span class="t">Conexión de red</span><span class="c" id="wifiState">-</span></div>
   <div class="wifi-grid" id="wifiBox"><div class="v">cargando...</div></div>
 </div>
 
