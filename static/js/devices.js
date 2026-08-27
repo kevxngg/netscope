@@ -10,6 +10,9 @@ async function load(){
   const cnt = devices.length+" equipos"+(enriching?" · resolviendo nombres…":"");
   document.getElementById("devCnt").textContent = cnt;
   render();
+  if(d.error && !devices.length){
+    document.getElementById("tree").innerHTML=`<div class="empty error">${NS.esc(d.error)}</div>`;
+  }
 
   // Si al entrar no hay nada escaneado aun, lanza un escaneo automatico.
   if(!everScanned && !devices.length && !enriching){ everScanned=true; scanNow(); }
@@ -44,10 +47,16 @@ function render(){
 
 async function scanNow(){
   const b=document.getElementById("scanBtn"); b.disabled=true; b.textContent="Escaneando…";
-  try{ await NS.post("/api/scan"); await load(); }catch(e){}
+  try{
+    const result=await NS.post("/api/scan");
+    if(!result.ok) throw new Error(result.error||"no se pudo escanear la red");
+    await load();
+  }catch(e){
+    document.getElementById("tree").innerHTML=`<div class="empty error">${NS.esc(e.message||"fallo la peticion")}</div>`;
+  }
   finally{ b.disabled=false; b.textContent="Escanear red"; }
 }
 
 loadStatus().then(load);
 // Refresco: rapido mientras se resuelven nombres, tranquilo cuando ya termino.
-setInterval(async()=>{ await loadStatus(); await load(); }, 2500);
+setInterval(async()=>{ try{ await loadStatus(); await load(); }catch(e){} }, 2500);

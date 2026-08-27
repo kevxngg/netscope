@@ -24,7 +24,8 @@ from mitm import interceptor, blocker
 
 app = Flask(__name__)
 
-_last_scan = {"devices": [], "gateway": "", "ts": 0, "enriching": False}
+_last_scan = {"devices": [], "gateway": "", "ts": 0, "enriching": False,
+              "error": ""}
 _scan_lock = threading.Lock()
 _enrich_lock = threading.Lock()
 _summary_cache = {"data": None, "ts": 0.0}
@@ -35,8 +36,11 @@ _AUTO_SCAN_SECS = 15   # re-escaneo automatico en segundo plano
 def _do_scan_fast():
     """FASE 1: ARP rapido. Publica los equipos al instante (con datos de cache)."""
     with _scan_lock:
-        own_ips = {ip for _, _, ip in scanner.get_local_networks()}
-        devices = scanner.arp_only()
+        networks = scanner.get_local_networks()
+        if not networks:
+            raise RuntimeError("no se detecto ninguna red local para escanear")
+        own_ips = {ip for _, _, ip in networks}
+        devices = scanner.arp_only(networks=networks)
         gateway = scanner.get_gateway_ip()
         # conserva nombre personalizado ya guardado
         for d in devices:
@@ -46,6 +50,7 @@ def _do_scan_fast():
         _last_scan["devices"] = devices
         _last_scan["gateway"] = gateway
         _last_scan["ts"] = time.time()
+        _last_scan["error"] = ""
         monitor.set_local_ips(list(own_ips))
     return devices, own_ips
 
@@ -71,6 +76,8 @@ def _enrich_and_store(devices, own_ips):
                     except Exception:
                         pass
             _last_scan["ts"] = time.time()
+        except Exception as e:
+            _last_scan["error"] = str(e)
         finally:
             _last_scan["enriching"] = False
 
@@ -88,8 +95,15 @@ def _auto_scan_loop():
         time.sleep(_AUTO_SCAN_SECS)
         try:
             _do_scan()
-        except Exception:
-            pass
+        except Exception as e:
+            _last_scan["error"] = str(e)
+
+
+def _background_scan():
+    try:
+        _do_scan()
+    except Exception as e:
+        _last_scan["error"] = str(e)
 
 
 def _device_by_ip(ip):
@@ -174,7 +188,8 @@ def api_networks():
 def api_devices():
     return jsonify({"devices": _last_scan["devices"],
                     "gateway": _last_scan["gateway"], "ts": _last_scan["ts"],
-                    "enriching": _last_scan.get("enriching", False)})
+                    "enriching": _last_scan.get("enriching", False),
+                    "error": _last_scan.get("error", "")})
 
 @app.route("/api/device/<ip>")
 def api_device(ip):
@@ -194,6 +209,7 @@ def api_scan():
         return jsonify({"ok": True, "count": len(devices), "devices": devices,
                         "gateway": _last_scan["gateway"], "enriching": True})
     except Exception as e:
+        _last_scan["error"] = str(e)
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/traffic")
@@ -383,7 +399,7 @@ def _startup():
     scanner.mdns.start()
     monitor.start()
     # Primer escaneo + bucle automatico que mantiene la lista fresca sola
-    threading.Thread(target=_do_scan, daemon=True).start()
+    threading.Thread(target=_background_scan, daemon=True).start()
     threading.Thread(target=_auto_scan_loop, daemon=True).start()
 
 def _shutdown(*_):

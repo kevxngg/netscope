@@ -69,10 +69,22 @@ def install_python_deps():
     req = os.path.join(HERE, "requirements.txt")
     if not os.path.exists(req):
         print("   ! no encontre requirements.txt")
-        return
+        return False
     vp = venv_python()
-    run([vp, "-m", "pip", "install", "--upgrade", "pip"])
-    run([vp, "-m", "pip", "install", "-r", req])
+    pip_check = run([vp, "-m", "pip", "--version"])
+    if pip_check is None or pip_check.returncode != 0:
+        print("   pip no esta disponible; intentando repararlo con ensurepip...")
+        repaired = run([vp, "-m", "ensurepip", "--upgrade"])
+        if repaired is None or repaired.returncode != 0:
+            print("   ! No se pudo instalar pip dentro del venv.")
+            return False
+    upgraded = run([vp, "-m", "pip", "install", "--upgrade", "pip"])
+    installed = run([vp, "-m", "pip", "install", "-r", req])
+    if (upgraded is None or upgraded.returncode != 0
+            or installed is None or installed.returncode != 0):
+        print("   ! Fallo la instalacion de dependencias.")
+        return False
+    return True
 
 
 def install_nmap(oid):
@@ -151,7 +163,9 @@ def main():
     if not ensure_venv():
         print("\nNo puedo continuar sin venv. Revisa tu instalacion de Python.")
         sys.exit(1)
-    install_python_deps()
+    if not install_python_deps():
+        print("\nNo puedo continuar sin las dependencias de Python.")
+        sys.exit(1)
     install_nmap(oid)
     check_npcap(oid)
     launch_app_elevated(oid)
