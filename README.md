@@ -46,6 +46,8 @@ como en la de la empresa.
 - Permisos de **administrador / root** (el escaneo y la captura los necesitan; NetScope los pide solo)
 - **Npcap** — necesario en Windows para ARP y captura de paquetes.
 - **nmap** — opcional; necesario únicamente para el escaneo profundo.
+- En Windows, los detalles avanzados de Wi-Fi pueden requerir permisos de
+  administrador y tener activada la ubicación del sistema.
 
 | SO | Gestor que usa `run.py` | Notas |
 |---|---|---|
@@ -176,6 +178,10 @@ La página de tráfico refresca los contadores aproximadamente cada 0,5 segundos
 sin acumular peticiones. La gráfica usa una curva suavizada y una escala
 vertical en MB/s. La lista muestra los dispositivos descubiertos en la red
 local, no cada IP externa como si fuera un dispositivo.
+
+En el resumen, el proveedor, ASN, país y ciudad son datos aproximados de la IP
+pública obtenidos desde un servicio externo. No representan necesariamente la
+ubicación física exacta del router o del servidor que estás usando.
 
 ### Intercepción (`[ inspect ]`)
 En una Wi-Fi normal tu equipo solo ve su propio tráfico. Para ver **todo** el de
