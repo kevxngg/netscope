@@ -24,6 +24,7 @@ como en la de la empresa.
 | Función | Descripción |
 |---|---|
 | **Árbol de la red** | El router como raíz y cada dispositivo como rama, con nombre, fabricante, IP y MAC. |
+| **Inventario de dispositivos** | Busca, filtra y ordena equipos conectados o ausentes; muestra tipo estimado, tráfico, confianza y última vez visto. |
 | **Nombres reales** | Combina mDNS/Bonjour, DNS inverso, NetBIOS y fabricante (OUI) para identificar cada equipo. |
 | **Escaneo profundo** | Con `nmap`: sistema operativo, puertos abiertos y servicio/versión de cada equipo. |
 | **Tráfico por dispositivo** | Bytes y paquetes en vivo, con barras de subida y bajada. |
@@ -31,12 +32,13 @@ como en la de la empresa.
 | **Intercepción selectiva** | Ver todo el tráfico de un equipo elegido y a qué dominios habla. |
 | **Autodetección del sistema** | Reconoce el SO al arrancar y avisa de permisos y dependencias que falten. |
 | **Info Wi-Fi** | Nombre de red (SSID), señal, canal y banda de la red a la que estás conectado. |
-| **Test de velocidad** | Latencia, descarga y subida (corre en el navegador, estilo fast.com). |
+| **Test de velocidad** | Latencia, descarga y subida con progreso, cancelación, jitter e historial local de mediciones. |
 | **Historial** | Registro local de eventos, bloqueos y dispositivos nuevos. |
 | **Nombres personalizados** | Renombra un equipo (ej. "Celular de Kevin"); se guarda en SQLite. |
 | **Bloquear equipos** | Corta el acceso a internet de un equipo desde la consola (ARP). |
 | **Exportar** | Descarga dispositivos y logs en CSV. |
 | **Gráfica en vivo** | Tráfico total de la red en una línea de tiempo. |
+| **Detalle de dispositivo** | Ficha de identidad, presencia, tráfico, historial y log filtrable por DNS, SNI y HTTP. |
 
 ---
 
@@ -155,6 +157,17 @@ El botón **[ scan ]** de cada equipo lanza un análisis con nmap bajo demanda:
 sistema operativo estimado, puertos abiertos y el servicio/versión de cada uno.
 Es por equipo (no toda la red de golpe) porque es un escaneo pesado.
 
+### Inventario y clasificación
+La página **Dispositivos** combina los equipos detectados con el historial local.
+Permite buscar por nombre, IP, MAC o fabricante, filtrar por estado y ordenar
+por IP, nombre, tráfico, última conexión o fabricante. El tipo se estima de
+forma conservadora usando nombres y fabricantes conocidos: cámara, celular,
+computador, router, impresora, TV/consola u otro dispositivo.
+
+Al abrir un equipo se muestra su identidad, estado, tráfico, veces visto,
+historial de eventos y un log filtrable. Las acciones de confianza e inspección
+están disponibles desde la ficha y el inventario.
+
 ### Interfaz (multipágina, estilo GitHub)
 La app ya no vive en un solo `index.html`: cada sección tiene su propia ruta
 (`/` resumen, `/devices` árbol, `/traffic` tráfico, `/device/<ip>` detalle,
@@ -247,6 +260,8 @@ El binario queda en `dist/` (igual necesita admin + Npcap/nmap).
 - [x] Historial local, nombres personalizados, confianza y exportación CSV.
 - [x] Intercepción y bloqueo selectivos con restauración de tablas ARP.
 - [x] Diagnóstico de permisos, dependencias, Npcap, gateway y ARP.
+- [x] Clasificación visual de dispositivos y ficha detallada con historial.
+- [x] Test de velocidad con progreso, cancelación, jitter e historial local.
 
 ## Próximas mejoras
 
