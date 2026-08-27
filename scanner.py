@@ -35,6 +35,13 @@ _cache_lock = threading.Lock()
 
 _mac_lookup = None
 _mac_lock = threading.Lock()
+_GENERIC_NAMES = {"", "(sin nombre)", "intel_ce_linux", "localhost",
+                  "unknown", "desconocido"}
+
+
+def usable_name(name: str) -> bool:
+    value = (name or "").strip().lower()
+    return value not in _GENERIC_NAMES and "intel_ce_linux" not in value
 
 
 def seed_caches_from_storage():
@@ -47,7 +54,7 @@ def seed_caches_from_storage():
                 continue
             if d.get("vendor"):
                 _vendor_cache.setdefault(mac, d["vendor"])
-            if d.get("auto_name"):
+            if usable_name(d.get("auto_name")):
                 _name_cache.setdefault(mac, d["auto_name"])
     except Exception:
         pass
@@ -302,9 +309,15 @@ def enrich(device: dict, own_ips=None) -> dict:
     key = mac.lower()
 
     # nombre: usa cache si ya hay uno "de verdad"; si no, resuelve.
-    name = device.get("name", "")
-    if not name or name == "(sin nombre)":
-        name = mdns.name_for(ip) or _reverse_dns(ip) or _netbios_name(ip)
+    name = device.get("name", "") if usable_name(device.get("name")) else ""
+    if not name:
+        for resolver in (lambda: mdns.name_for(ip),
+                         lambda: _netbios_name(ip),
+                         lambda: _reverse_dns(ip)):
+            candidate = resolver()
+            if usable_name(candidate):
+                name = candidate
+                break
     device["name"] = name or "(sin nombre)"
 
     # fabricante: cache o lookup
@@ -312,7 +325,7 @@ def enrich(device: dict, own_ips=None) -> dict:
     device["is_self"] = ip in own_ips
 
     with _cache_lock:
-        if name:
+        if usable_name(name):
             _name_cache[key] = name
         if device["vendor"]:
             _vendor_cache[key] = device["vendor"]
