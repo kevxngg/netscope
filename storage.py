@@ -17,6 +17,12 @@ DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netscope.db")
 _lock = threading.Lock()
 
 
+def _usable_auto_name(name):
+    value = (name or "").strip().lower()
+    return value not in {"", "(sin nombre)", "intel_ce_linux", "localhost",
+                         "unknown", "desconocido"} and "intel_ce_linux" not in value
+
+
 def _conn():
     c = sqlite3.connect(DB, timeout=5)
     c.row_factory = sqlite3.Row
@@ -48,9 +54,14 @@ def upsert_device(mac, ip, vendor, auto_name):
     with _lock, _conn() as c:
         row = c.execute("SELECT mac FROM devices WHERE mac=?", (mac,)).fetchone()
         if row:
+            previous = c.execute("SELECT auto_name FROM devices WHERE mac=?", (mac,)).fetchone()
+            stored_name = previous["auto_name"] if previous else ""
+            selected_name = auto_name
+            if not _usable_auto_name(auto_name) and _usable_auto_name(stored_name):
+                selected_name = stored_name
             c.execute("UPDATE devices SET ip=?, vendor=?, auto_name=?, last_seen=?, "
                       "seen_count=seen_count+1 WHERE mac=?",
-                      (ip, vendor, auto_name, now, mac))
+                      (ip, vendor, selected_name, now, mac))
             return False
         c.execute("INSERT INTO devices(mac,ip,vendor,auto_name,first_seen,last_seen) "
                   "VALUES(?,?,?,?,?,?)", (mac, ip, vendor, auto_name, now, now))
