@@ -217,6 +217,8 @@ def api_traffic():
     by_ip = {d["ip"]: d for d in _last_scan["devices"]}
     rows = []
     for t in monitor.snapshot():
+        if t["ip"] not in by_ip:
+            continue
         info = by_ip.get(t["ip"], {})
         rows.append({**t, "name": info.get("name", ""),
                      "vendor": info.get("vendor", ""), "mac": info.get("mac", "")})
