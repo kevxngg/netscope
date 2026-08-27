@@ -27,17 +27,14 @@ como en la de la empresa.
 | **Nombres reales** | Combina mDNS/Bonjour, DNS inverso, NetBIOS y fabricante (OUI) para identificar cada equipo. |
 | **Escaneo profundo** | Con `nmap`: sistema operativo, puertos abiertos y servicio/versión de cada equipo. |
 | **Tráfico por dispositivo** | Bytes y paquetes en vivo, con barras de subida y bajada. |
+| **Gráfica de tráfico** | Curva suavizada con escala vertical en MB/s y lecturas cada 0,5 segundos. |
 | **Intercepción selectiva** | Ver todo el tráfico de un equipo elegido y a qué dominios habla. |
 | **Autodetección del sistema** | Reconoce el SO al arrancar y avisa de permisos y dependencias que falten. |
-| **Instalación automática** | `run.py` instala dependencias y nmap, y arranca con privilegios de administrador. |
-| **Interfaz multipágina** | Panel estilo GitHub (barra lateral) con una ruta por sección y fuente SF Pro. |
-| **Log de conexiones** | Registro en vivo de a dónde habla cada equipo: DNS, SNI (TLS) y URL en HTTP. |
 | **Info Wi-Fi** | Nombre de red (SSID), señal, canal y banda de la red a la que estás conectado. |
 | **Test de velocidad** | Latencia, descarga y subida (corre en el navegador, estilo fast.com). |
-| **Historial** | Registro de eventos y aviso cuando aparece un dispositivo desconocido. |
+| **Historial** | Registro local de eventos, bloqueos y dispositivos nuevos. |
 | **Nombres personalizados** | Renombra un equipo (ej. "Celular de Kevin"); se guarda en SQLite. |
 | **Bloquear equipos** | Corta el acceso a internet de un equipo desde la consola (ARP). |
-| **Notificaciones** | Avisos por Telegram cuando entra un equipo nuevo (opcional). |
 | **Exportar** | Descarga dispositivos y logs en CSV. |
 | **Gráfica en vivo** | Tráfico total de la red en una línea de tiempo. |
 
@@ -47,7 +44,8 @@ como en la de la empresa.
 
 - **Python 3.8+**
 - Permisos de **administrador / root** (el escaneo y la captura los necesitan; NetScope los pide solo)
-- **nmap** — para el escaneo profundo (lo instala `run.py` si falta)
+- **Npcap** — necesario en Windows para ARP y captura de paquetes.
+- **nmap** — opcional; necesario únicamente para el escaneo profundo.
 
 | SO | Gestor que usa `run.py` | Notas |
 |---|---|---|
@@ -76,6 +74,10 @@ python3 run.py        # macOS / Linux
 **Homebrew** en macOS, **apt/dnf/pacman** en Linux). Puede pedirte confirmación
 (UAC) o contraseña. Si algo no se puede instalar solo, te muestra el comando
 exacto para hacerlo a mano.
+
+El instalador también comprueba que el entorno virtual tenga `pip`. Si el venv
+existe pero está incompleto, intenta repararlo con `ensurepip` y se detiene si
+la instalación de dependencias falla, en lugar de abrir una aplicación rota.
 
 > **¿Por qué un venv?** Al elevar a administrador, el proceso corre en otra
 > "sesión" y **no ve los paquetes instalados en tu usuario**. NetScope usa un
@@ -115,6 +117,15 @@ Al arrancar, NetScope reconoce el sistema y muestra una barra de estado con lo
 que tiene y lo que le falta (permisos, captura, nmap). Si algo falta, te da el
 comando exacto para instalarlo en tu SO.
 
+También puedes ejecutar el diagnóstico sin iniciar la web:
+
+```bash
+python diagnostico.py
+```
+
+El diagnóstico revisa permisos, dependencias, Npcap, nmap, interfaces, gateway
+y realiza una prueba ARP usando la interfaz de red seleccionada por NetScope.
+
 ### Nota para Windows
 
 Instala Python desde [python.org](https://www.python.org/downloads/) (opción
@@ -128,6 +139,11 @@ verla.
 Hace un **ARP scan** del segmento de red para encontrar todo lo conectado, y
 luego resuelve el nombre de cada equipo por orden: mDNS/Bonjour → DNS inverso →
 NetBIOS → fabricante por MAC.
+
+Cuando hay varias interfaces, primero elige la red que contiene el gateway y
+descarta adaptadores virtuales como WSL, VPN, Docker o Bluetooth. El ARP se
+envía por la interfaz seleccionada, evitando que un adaptador virtual devuelva
+una lista vacía.
 
 > Muchos teléfonos usan MAC aleatoria y no publican nombre; en esos casos verás
 > `fabricante + IP`. Es privacidad del dispositivo, no un fallo.
@@ -156,6 +172,11 @@ fuentes:
 > ver; lo máximo es el dominio. La URL completa solo aparece en tráfico HTTP
 > plano. Es un límite criptográfico, no del programa.
 
+La página de tráfico refresca los contadores aproximadamente cada 0,5 segundos
+sin acumular peticiones. La gráfica usa una curva suavizada y una escala
+vertical en MB/s. La lista muestra los dispositivos descubiertos en la red
+local, no cada IP externa como si fuera un dispositivo.
+
 ### Intercepción (`[ inspect ]`)
 En una Wi-Fi normal tu equipo solo ve su propio tráfico. Para ver **todo** el de
 otro equipo, NetScope lo intercepta con **ARP spoofing selectivo** (solo el que
@@ -178,6 +199,7 @@ netscope/
 ├── run.py              # instalador + lanzador (dependencias, nmap, privilegios)
 ├── app.py              # servidor (waitress) : rutas de páginas + API
 ├── scanner.py          # descubrimiento de dispositivos (ARP) + nombres en paralelo
+├── diagnostico.py      # diagnóstico de requisitos, interfaces, gateway y ARP
 ├── sniffer.py          # captura + log (DNS / SNI / HTTP), optimizado
 ├── mitm.py             # intercepción selectiva (ARP spoofing)
 ├── deepscan.py         # wrapper de nmap (SO, puertos, servicios)
@@ -210,14 +232,22 @@ El binario queda en `dist/` (igual necesita admin + Npcap/nmap).
 
 ---
 
-## Roadmap
+## Estado actual
 
-- [ ] Historial en SQLite y alerta cuando aparece un equipo desconocido
-- [ ] Bloquear un equipo desde la consola (cortarle el acceso)
-- [ ] Gráfica temporal del tráfico
-- [ ] Resolución inversa de las IPs externas a las que habla cada equipo
+- [x] Escaneo ARP con selección de interfaz y filtro de adaptadores virtuales.
+- [x] Identificación por mDNS, DNS inverso, NetBIOS y fabricante OUI.
+- [x] Tráfico en vivo con contadores por dispositivo y gráfica suavizada.
+- [x] Escaneo profundo opcional con nmap.
+- [x] Historial local, nombres personalizados, confianza y exportación CSV.
+- [x] Intercepción y bloqueo selectivos con restauración de tablas ARP.
+- [x] Diagnóstico de permisos, dependencias, Npcap, gateway y ARP.
+
+## Próximas mejoras
+
+- [ ] Resolver nombres de IP externas en el registro de tráfico.
+- [ ] Persistir muestras de tráfico para consultar gráficas históricas.
 
 ## Licencia
 
-Elige una licencia para tu repo (por ejemplo MIT) y añádela como archivo
-`LICENSE`. Sin licencia, por defecto nadie puede reutilizar el código.
+Este proyecto se distribuye bajo la licencia MIT. Consulta el archivo
+[`LICENSE`](LICENSE) para ver el texto completo.
