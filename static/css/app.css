@@ -128,7 +128,7 @@ a{color:inherit;text-decoration:none}
 .dev:hover{background:var(--surface-2)}
 .dev.is-offline{opacity:.6}.dev-icon{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;color:var(--green);font-size:18px}
 .dev .ip{color:var(--green)}
-.dev-main{min-width:0}.dev-meta{display:flex;gap:10px;margin-top:3px;font-size:11px}.dev .mac{color:var(--faint);overflow:hidden;text-overflow:ellipsis}.dev-info{min-width:0;display:flex;flex-direction:column;gap:3px}.dev-stats{color:var(--faint);font-size:11px}
+.dev-main{min-width:0}.dev-meta{display:flex;gap:10px;margin-top:3px;font-size:11px;flex-wrap:wrap}.dev-kind{color:var(--green-dim);font-weight:600}.dev .mac{color:var(--faint);overflow:hidden;text-overflow:ellipsis}.dev-info{min-width:0;display:flex;flex-direction:column;gap:3px}.dev-info .vn{color:var(--muted)}.dev-stats{color:var(--faint);font-size:11px}
 .dev .nm{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dev .vn{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .dev .self{color:var(--amber);font-size:11px;border:1px solid var(--amber);border-radius:6px;padding:0 6px;margin-left:6px}
