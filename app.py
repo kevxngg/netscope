@@ -9,6 +9,10 @@ import signal
 import sys
 import threading
 import time
+import platform
+import re
+import subprocess
+from urllib.request import urlopen
 
 from flask import Flask, jsonify, render_template, request
 
@@ -30,6 +34,9 @@ _scan_lock = threading.Lock()
 _enrich_lock = threading.Lock()
 _summary_cache = {"data": None, "ts": 0.0}
 _SUMMARY_TTL = 3.0
+_health_cache = {"data": None, "ts": 0.0}
+_HEALTH_TTL = 10.0
+_traffic_state = {"ts": 0.0, "sent": 0, "recv": 0, "peak": 0.0}
 _AUTO_SCAN_SECS = 15   # re-escaneo automatico en segundo plano
 
 
@@ -114,6 +121,37 @@ def _sync_inspected():
     monitor.set_inspected(set(interceptor.list_targets()))
 
 
+def _network_health():
+    now = time.time()
+    if _health_cache["data"] is not None and now - _health_cache["ts"] < _HEALTH_TTL:
+        return _health_cache["data"]
+    gateway = _last_scan["gateway"] or scanner.get_gateway_ip()
+    result = {"gateway": gateway, "latency_ms": None, "packet_loss": None,
+              "internet": False}
+    if gateway:
+        command = (["ping", "-n", "1", "-w", "800", gateway]
+                   if platform.system() == "Windows"
+                   else ["ping", "-c", "1", "-W", "1", gateway])
+        started = time.perf_counter()
+        try:
+            process = subprocess.run(command, capture_output=True, timeout=2)
+            if process.returncode == 0:
+                result["latency_ms"] = round((time.perf_counter() - started) * 1000)
+                result["packet_loss"] = 0
+            else:
+                result["packet_loss"] = 100
+        except Exception:
+            result["packet_loss"] = 100
+    try:
+        with urlopen("https://www.google.com/generate_204", timeout=2):
+            result["internet"] = True
+    except Exception:
+        pass
+    _health_cache["data"] = result
+    _health_cache["ts"] = now
+    return result
+
+
 # ==== Paginas ============================================================== #
 @app.route("/")
 def page_overview():
@@ -155,12 +193,51 @@ def api_summary():
     if _summary_cache["data"] and now - _summary_cache["ts"] < _SUMMARY_TTL:
         return jsonify(_summary_cache["data"])
     r = platform_setup.readiness()
+    traffic = monitor.snapshot()
+    local_ips = {d["ip"] for d in _last_scan["devices"]}
+    local_traffic = [t for t in traffic if t["ip"] in local_ips]
+    traffic_totals = {
+        "bytes": sum(t["bytes"] for t in local_traffic),
+        "sent_bytes": sum(t["sent_bytes"] for t in local_traffic),
+        "recv_bytes": sum(t["recv_bytes"] for t in local_traffic),
+    }
+    previous_ts = _traffic_state["ts"]
+    if previous_ts:
+        elapsed = max(now - previous_ts, 0.001)
+        sent_rate = max(0, traffic_totals["sent_bytes"] - _traffic_state["sent"]) / elapsed
+        recv_rate = max(0, traffic_totals["recv_bytes"] - _traffic_state["recv"]) / elapsed
+        current_rate = sent_rate + recv_rate
+        _traffic_state["peak"] = max(_traffic_state["peak"], current_rate)
+    else:
+        sent_rate = recv_rate = 0.0
+    _traffic_state.update({"ts": now, "sent": traffic_totals["sent_bytes"],
+                           "recv": traffic_totals["recv_bytes"]})
+    stored = storage.all_devices()
+    events = storage.list_events(5)
+    day_ago = time.time() - 86400
+    new_today = sum(1 for e in storage.list_events(1000)
+                    if e.get("type") == "nuevo" and (e.get("ts") or 0) >= day_ago)
     data = {
         "devices": len(_last_scan["devices"]),
         "inspecting": interceptor.list_targets(),
-        "traffic_ips": monitor.summary()["traffic_ips"],
+        "traffic_ips": len(local_traffic),
         "gateway": _last_scan["gateway"],
         "os": r["os"], "admin": r["admin"], "nmap": r["nmap"]["ok"],
+        "health": _network_health(),
+        "traffic": {
+            **traffic_totals, "sent_rate": sent_rate, "recv_rate": recv_rate,
+            "peak_rate": _traffic_state["peak"],
+        },
+        "devices_info": {
+            "unknown": sum(1 for d in stored if not d.get("trusted")),
+            "new_today": new_today,
+            "named": sum(1 for d in stored if d.get("custom_name") or d.get("auto_name")),
+        },
+        "security": {
+            "admin": r["admin"], "capture": r["capture"]["ok"],
+            "nmap": r["nmap"]["ok"], "netbios": r["netbios"]["ok"],
+        },
+        "events": events,
     }
     _summary_cache["data"] = data
     _summary_cache["ts"] = now
@@ -186,7 +263,34 @@ def api_networks():
 
 @app.route("/api/devices")
 def api_devices():
-    return jsonify({"devices": _last_scan["devices"],
+    current = {d["mac"].lower(): d for d in _last_scan["devices"]}
+    traffic = {t["ip"]: t for t in monitor.snapshot()}
+    inventory = []
+    for saved in storage.all_devices():
+        mac = (saved.get("mac") or "").lower()
+        device = dict(current.get(mac, saved))
+        device.update({"mac": mac or device.get("mac", ""),
+                       "custom_name": saved.get("custom_name", "") or device.get("custom_name", ""),
+                       "trusted": bool(saved.get("trusted", 0)),
+                       "first_seen": saved.get("first_seen"),
+                       "last_seen": saved.get("last_seen"),
+                       "seen_count": saved.get("seen_count", 0),
+                       "online": mac in current})
+        stats = traffic.get(device.get("ip"), {})
+        device["traffic"] = stats.get("bytes", 0)
+        device["sent_bytes"] = stats.get("sent_bytes", 0)
+        device["recv_bytes"] = stats.get("recv_bytes", 0)
+        inventory.append(device)
+    known_macs = {(d.get("mac") or "").lower() for d in inventory}
+    for device in _last_scan["devices"]:
+        if (device.get("mac") or "").lower() not in known_macs:
+            current_device = dict(device)
+            current_device.update({"trusted": False, "online": True,
+                                   "seen_count": 0, "traffic": traffic.get(device.get("ip"), {}).get("bytes", 0),
+                                   "sent_bytes": traffic.get(device.get("ip"), {}).get("sent_bytes", 0),
+                                   "recv_bytes": traffic.get(device.get("ip"), {}).get("recv_bytes", 0)})
+            inventory.append(current_device)
+    return jsonify({"devices": inventory,
                     "gateway": _last_scan["gateway"], "ts": _last_scan["ts"],
                     "enriching": _last_scan.get("enriching", False),
                     "error": _last_scan.get("error", "")})
