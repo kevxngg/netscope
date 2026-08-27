@@ -177,28 +177,32 @@ def get_gateway_ip() -> str:
 
 
 # --- descubrimiento ARP (lo rapido) ---------------------------------------- #
-def arp_scan(network: str, timeout: int = 2):
+def arp_scan(network: str, timeout: int = 2, iface: str = None):
     from scapy.all import ARP, Ether, srp, conf
     conf.verb = 0
     packet = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=network)
-    answered, _ = srp(packet, timeout=timeout, retry=1, verbose=0)
+    options = {"timeout": timeout, "retry": 1, "verbose": 0}
+    if iface:
+        options["iface"] = iface
+    answered, _ = srp(packet, **options)
     seen = {}
     for _, rcv in answered:
         seen[rcv.hwsrc] = rcv.psrc
     return [{"ip": ip, "mac": mac} for mac, ip in seen.items()]
 
 
-def arp_only(timeout: int = 2):
+def arp_only(timeout: int = 2, networks=None):
     """
     FASE 1: descubre IP+MAC de todas las redes locales (rapido) y pega el
     fabricante/nombre que ya este en cache. Devuelve la lista lista para mostrar.
     """
     found = {}
-    for iface, cidr, own_ip in get_local_networks():
-        for dev in arp_scan(cidr, timeout=timeout):
+    networks = networks if networks is not None else get_local_networks()
+    for iface, cidr, own_ip in networks:
+        for dev in arp_scan(cidr, timeout=timeout, iface=iface):
             dev["iface"] = iface
             found[dev["mac"]] = dev
-    own_ips = {ip for _, _, ip in get_local_networks()}
+    own_ips = {ip for _, _, ip in networks}
 
     devices = []
     with _cache_lock:

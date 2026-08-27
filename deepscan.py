@@ -15,6 +15,7 @@ Requiere nmap instalado y permisos de admin/root (la deteccion de SO los pide).
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
+import ipaddress
 
 
 def nmap_available() -> bool:
@@ -22,6 +23,10 @@ def nmap_available() -> bool:
 
 
 def deep_scan(ip: str, timeout: int = 180) -> dict:
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return {"ok": False, "error": "la IP no es valida."}
     if not nmap_available():
         return {"ok": False, "error": "nmap no esta instalado en este equipo."}
 
@@ -32,6 +37,10 @@ def deep_scan(ip: str, timeout: int = 180) -> dict:
         return {"ok": False, "error": "nmap tardo demasiado (timeout)."}
     except Exception as e:
         return {"ok": False, "error": f"no se pudo ejecutar nmap: {e}"}
+
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or "nmap devolvio un error."
+        return {"ok": False, "error": detail}
 
     return _parse_xml(proc.stdout, ip)
 
