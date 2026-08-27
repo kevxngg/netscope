@@ -57,7 +57,7 @@ function render(){
     const trustLabel=dv.trusted?"Marcar como desconocido":"Marcar como confiable";
     h+=`<div class="dev ${dv.online?'':'is-offline'}" onclick="location.href='/device/${dv.ip}'">
       <span class="dev-icon" aria-hidden="true">${type.icon}</span>
-      <span class="dev-main"><span class="nm">${nm}${dv.is_self?'<span class="self">este equipo</span>':''}</span><span class="dev-meta"><span class="ip num">${dv.ip}</span><span class="mac num">${NS.esc(dv.mac||"-")}</span></span></span>
+      <span class="dev-main"><span class="nm">${nm}${dv.is_self?'<span class="self">este equipo</span>':''}</span><span class="dev-meta"><span class="dev-kind">${type.label}</span><span class="ip num">${dv.ip}</span><span class="mac num">${NS.esc(dv.mac||"-")}</span></span></span>
       <span class="dev-info"><span class="vn">${vn}</span><span class="dev-stats">${dv.online?"conectado":"ausente"} · ${traffic} · ${seen}</span></span>
       <span class="acts">
         ${dv.trusted?'<span class="tag trusted">confiable</span>':'<span class="tag unknown">revisar</span>'}
@@ -87,11 +87,13 @@ async function toggleInspectDevice(event,ip){
 function displayName(device){ return device.custom_name || (device.name&&device.name!=="(sin nombre)"?device.name:""); }
 function deviceType(device){
   const value=(displayName(device)+" "+(device.vendor||"")).toLowerCase();
-  if(/router|gateway|ubiquiti|tp-link|cisco|netgear/.test(value)) return {icon:"⌁"};
-  if(/iphone|android|samsung|xiaomi|phone|mobile/.test(value)) return {icon:"◉"};
-  if(/printer|epson|canon|brother|hp /.test(value)) return {icon:"▣"};
-  if(/tv|roku|chromecast|playstation|xbox/.test(value)) return {icon:"▤"};
-  return {icon:"◇"};
+  if(/camera|camara|cctv|ipcam|hikvision|dahua|wyze|arlo|ring|reolink|nest cam/.test(value)) return {icon:"▥",label:"Cámara"};
+  if(/router|gateway|ubiquiti|tp-link|cisco|netgear|hitron|arris/.test(value)) return {icon:"⌁",label:"Router"};
+  if(/iphone|android|samsung|xiaomi|huawei|pixel|phone|mobile|galaxy/.test(value)) return {icon:"◉",label:"Celular"};
+  if(/printer|impresora|epson|canon|brother|hp /.test(value)) return {icon:"▣",label:"Impresora"};
+  if(/tv|roku|chromecast|playstation|xbox|firestick/.test(value)) return {icon:"▤",label:"TV / consola"};
+  if(/laptop|notebook|desktop|computer|computador|pc|windows|linux|macbook|intel|dell|lenovo|asus|acer|apple/.test(value)) return {icon:"◇",label:"Computador"};
+  return {icon:"◇",label:"Dispositivo"};
 }
 
 function updateDeviceView(){ render(); }
