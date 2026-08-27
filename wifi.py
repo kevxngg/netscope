@@ -16,11 +16,16 @@ import platform
 import subprocess
 import re
 import unicodedata
+import json
+import time
+from urllib.request import Request, urlopen
 
 _IS_WIN = platform.system() == "Windows"
 
 # En Windows, evita que parpadeen ventanas de consola al llamar netsh/powershell.
 _NO_WINDOW = 0x08000000 if _IS_WIN else 0
+_public_cache = {"data": None, "ts": 0.0}
+_PUBLIC_TTL = 900
 
 
 # --------------------------------------------------------------------------- #
@@ -154,7 +159,11 @@ def _windows_powershell():
     )
     ssid = _run(["powershell", "-NoProfile", "-Command", ps]).strip()
     if ssid:
-        return {"connected": True, "ssid": ssid}
+        return {
+            "connected": True,
+            "ssid": ssid,
+            "details_note": "Windows requiere permisos de administrador y ubicación activa para mostrar todos los detalles Wi-Fi.",
+        }
     return {"connected": False}
 
 
@@ -220,14 +229,43 @@ def get_wifi_info() -> dict:
     try:
         s = platform.system()
         if s == "Windows":
-            return _windows()
-        if s == "Darwin":
-            return _macos()
-        if s == "Linux":
-            return _linux()
+            info = _windows()
+        elif s == "Darwin":
+            info = _macos()
+        elif s == "Linux":
+            info = _linux()
+        else:
+            info = {"connected": False}
+        info["internet"] = get_public_network_info()
+        return info
     except Exception:
         pass
     return {"connected": False}
+
+
+def get_public_network_info() -> dict:
+    """Obtiene datos aproximados de la IP pública sin bloquear la interfaz."""
+    now = time.time()
+    if _public_cache["data"] is not None and now - _public_cache["ts"] < _PUBLIC_TTL:
+        return _public_cache["data"]
+    try:
+        request = Request("https://ipapi.co/json/", headers={"User-Agent": "NetScope/1.0"})
+        with urlopen(request, timeout=3) as response:
+            raw = json.load(response)
+        data = {
+            "ip": raw.get("ip", ""),
+            "provider": raw.get("org", "") or raw.get("asn", ""),
+            "asn": raw.get("asn", ""),
+            "city": raw.get("city", ""),
+            "region": raw.get("region", ""),
+            "country": raw.get("country_name", ""),
+            "timezone": raw.get("timezone", ""),
+        }
+    except Exception:
+        data = {"error": "información de Internet no disponible"}
+    _public_cache["data"] = data
+    _public_cache["ts"] = now
+    return data
 
 
 if __name__ == "__main__":
