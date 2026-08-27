@@ -6,8 +6,16 @@
   <div class="actions"><button class="btn ghost" onclick="resetTraffic()">Reiniciar contadores</button></div>
 </div>
 <div class="card" style="margin-bottom:16px">
-  <div class="card-h"><span class="t">Trafico total (en vivo)</span><span class="c" id="rateTxt">-</span></div>
-  <div style="padding:14px 16px"><canvas id="chart" height="120" style="width:100%;display:block"></canvas></div>
+  <div class="card-h traffic-head">
+    <div><span class="t">Trafico total</span><span class="traffic-sub">lectura en tiempo real</span></div>
+    <div class="traffic-rate"><span id="rateTxt">-</span><span class="traffic-window">ultimos 2 min</span></div>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-scale" aria-hidden="true"><span id="chartMax">-</span><span>0 B/s</span></div>
+    <div class="chart-main"><canvas id="chart" height="180"></canvas><div class="chart-empty" id="chartEmpty">recopilando lecturas...</div></div>
+    <div class="chart-axis" aria-hidden="true"><span>hace 2 min</span><span>ahora</span></div>
+  </div>
+  <div class="chart-legend"><span><i class="legend-dot live"></i>actividad total</span><span class="legend-pulse">actualiza cada 2 s</span></div>
 </div>
 <div class="card">
   <div class="card-h"><span class="t">Por dispositivo</span><span class="c" id="trafCnt">-</span></div>
