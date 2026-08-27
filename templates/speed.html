@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Test de velocidad</h1><p>Latencia, descarga y subida de tu conexion (via Cloudflare).</p></div>
-  <div class="actions"><button class="btn primary" id="runBtn" onclick="runTest()">Iniciar prueba</button></div>
+  <div class="actions"><button class="btn primary" id="runBtn" onclick="runTest()">Iniciar prueba</button><button class="btn ghost speed-cancel" id="cancelBtn" onclick="cancelTest()" hidden>Cancelar</button></div>
 </div>
 
 <div class="speed-dials">
@@ -11,6 +11,12 @@
   <div class="dial"><div class="lbl">Descarga</div><div class="num" id="down">--</div><div class="unit">Mbps</div></div>
   <div class="dial up"><div class="lbl">Subida</div><div class="num" id="up">--</div><div class="unit">Mbps</div></div>
 </div>
-<div class="speed-status" id="status">Pulsa "Iniciar prueba". Tarda ~15-30 segundos.</div>
+<div class="speed-progress" aria-hidden="true"><div id="progressBar"></div></div>
+<div class="speed-status" id="status">Pulsa "Iniciar prueba". Tarda unos 20 segundos.</div>
+<div class="speed-meta" id="resultMeta"></div>
+<div class="card speed-history-card">
+  <div class="card-h"><span class="t">Últimas mediciones</span><button class="btn sm ghost" onclick="clearHistory()">Limpiar</button></div>
+  <div id="speedHistory"><div class="empty">Todavía no hay mediciones guardadas.</div></div>
+</div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/speed.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/speed.js', v='2') }}"></script>{% endblock %}
