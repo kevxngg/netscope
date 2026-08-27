@@ -2,11 +2,20 @@
 {% block title %} - Dispositivos{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Arbol de la red</h1><p>Router como raiz y cada equipo como rama. Clic en un equipo para ver su detalle.</p></div>
+  <div><h1>Inventario de dispositivos</h1><p>Equipos activos e históricos de tu red local.</p></div>
   <div class="actions"><button class="btn primary" id="scanBtn" onclick="scanNow()">Escanear red</button></div>
 </div>
 <div class="card">
-  <div class="card-h"><span class="t">Dispositivos conectados</span><span class="c" id="devCnt">-</span></div>
+  <div class="device-tools">
+    <label class="search-field"><span aria-hidden="true">⌕</span><input id="deviceSearch" type="search" placeholder="Buscar nombre, IP, MAC o fabricante" autocomplete="off"></label>
+    <select id="deviceFilter" class="device-select" aria-label="Filtrar dispositivos">
+      <option value="all">Todos</option><option value="online">Conectados</option><option value="offline">Ausentes</option><option value="unknown">Desconocidos</option><option value="trusted">Confiables</option><option value="unnamed">Sin nombre</option>
+    </select>
+    <select id="deviceSort" class="device-select" aria-label="Ordenar dispositivos">
+      <option value="ip">Ordenar: IP</option><option value="name">Ordenar: nombre</option><option value="traffic">Ordenar: tráfico</option><option value="last_seen">Ordenar: última vez</option><option value="vendor">Ordenar: fabricante</option>
+    </select>
+  </div>
+  <div class="device-summary"><span id="devCnt">-</span><span id="scanMeta">-</span></div>
   <div class="tree" id="tree"><div class="empty">escaneando la red...</div></div>
 </div>
 {% endblock %}
