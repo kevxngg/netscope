@@ -101,19 +101,42 @@ a{color:inherit;text-decoration:none}
 .stat .k{font-size:12px;color:var(--muted)}
 .stat .v{font-family:var(--display);font-size:28px;font-weight:600;margin-top:4px}
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+.overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.overview-panel{overflow:hidden}
+.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border-soft);padding:1px}
+.metric-grid>div{background:var(--surface);padding:14px 15px;min-width:0}
+.metric-grid span{display:block;color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.metric-grid b{display:block;color:var(--green);font-family:var(--display);font-size:18px;margin-top:4px;overflow:hidden;text-overflow:ellipsis}
+.status-list{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:14px 16px;color:var(--muted);font-size:12px}
+.status-list>div{display:flex;align-items:center;gap:7px}
+.status-mark{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;font-size:10px;font-weight:700}
+.status-mark.ok{background:var(--green-soft);color:var(--green)}
+.status-mark.warn{background:#4a3212;color:var(--amber)}
+.recent-panel{margin-bottom:16px}
+.event-row{display:flex;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border-soft);font-size:12px}
+.event-row:last-child{border-bottom:none}.event-row span{color:var(--amber);text-transform:uppercase;font-size:10px}.event-row b{font-weight:400;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ---------- Árbol de red ---------- */
+.device-tools{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap}
+.search-field{display:flex;align-items:center;gap:8px;flex:1;min-width:220px;border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--faint);background:var(--bg)}
+.search-field input{border:0;outline:0;background:transparent;color:var(--text);font:inherit;width:100%}.search-field input::placeholder{color:var(--faint)}
+.device-select{border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);padding:8px 10px;font:inherit;font-size:12px}
+.device-summary{display:flex;justify-content:space-between;padding:8px 16px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--border-soft)}
 .tree{padding:8px 6px}
 .root{padding:8px 12px;color:var(--green);font-family:var(--display);font-weight:600}
-.dev{display:grid;grid-template-columns:150px 1fr 150px auto;gap:12px;align-items:center;padding:11px 14px;border-radius:10px;cursor:pointer}
+.dev{display:grid;grid-template-columns:34px minmax(180px,1.3fr) minmax(130px,1fr) auto;gap:12px;align-items:center;padding:11px 14px;border-radius:10px;cursor:pointer;border-bottom:1px solid var(--border-soft)}
 .dev:hover{background:var(--surface-2)}
+.dev.is-offline{opacity:.6}.dev-icon{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;color:var(--green);font-size:18px}
 .dev .ip{color:var(--green)}
+.dev-main{min-width:0}.dev-meta{display:flex;gap:10px;margin-top:3px;font-size:11px}.dev .mac{color:var(--faint);overflow:hidden;text-overflow:ellipsis}.dev-info{min-width:0;display:flex;flex-direction:column;gap:3px}.dev-stats{color:var(--faint);font-size:11px}
 .dev .nm{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dev .vn{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .dev .self{color:var(--amber);font-size:11px;border:1px solid var(--amber);border-radius:6px;padding:0 6px;margin-left:6px}
 .dev .acts{display:flex;gap:7px;justify-self:end}
 .tag{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:2px 7px}
 .tag.on{color:var(--green);border-color:var(--green)}
+.tag.trusted{color:var(--green);border-color:var(--green-dim)}.tag.unknown{color:var(--amber);border-color:#8d6c28}
+.icon-action{border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:7px;width:30px;height:28px;cursor:pointer;font-size:16px}.icon-action:hover{color:var(--green);border-color:var(--green)}
 
 /* ---------- Tráfico ---------- */
 .traffic-head .t{display:block}
@@ -173,8 +196,10 @@ a{color:inherit;text-decoration:none}
   .overlay.open{display:block}
   .stats-row{grid-template-columns:repeat(2,1fr)}
   .grid-2{grid-template-columns:1fr}
+  .overview-grid{grid-template-columns:1fr}
   .dev{grid-template-columns:1fr auto}
   .dev .vn{display:none}
+  .dev{grid-template-columns:30px minmax(0,1fr) auto}.dev-info{display:none}.device-tools{align-items:stretch}.device-select{flex:1}.search-field{min-width:100%}
 }
 @media (prefers-reduced-motion:reduce){.sidebar{transition:none}}
 
@@ -187,9 +212,13 @@ a{color:inherit;text-decoration:none}
 
 /* ---------- WiFi card / speed ---------- */
 .wifi-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:14px 16px}
+.wifi-grid .wifi-section-title{grid-column:1/-1;color:var(--green);font-family:var(--display);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border-soft);padding:4px 0 6px;margin-top:2px}
+.wifi-grid .wifi-section-title:not(:first-child){margin-top:8px}
+.wifi-ssid-cell{grid-column:1/-1}
 .wifi-grid .k{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.8px}
 .wifi-grid .v{font-size:15px;margin-top:2px}
 .wifi-ssid{font-family:var(--display);font-size:20px;font-weight:600;color:var(--green)}
+.wifi-disclaimer{grid-column:1/-1;color:var(--faint);font-size:11px;margin-top:4px}
 
 .speed-dials{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
 .dial{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px;text-align:center;box-shadow:var(--shadow)}
