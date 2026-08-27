@@ -34,7 +34,7 @@ function render(){
     else if(filterMode==="offline") status=!dv.online;
     else if(filterMode==="unknown") status=!dv.trusted;
     else if(filterMode==="trusted") status=dv.trusted;
-    else if(filterMode==="unnamed") status=!dv.name&&!dv.custom_name;
+    else if(filterMode==="unnamed") status=!displayName(dv);
     return matches&&status;
   }).sort((a,b)=>{
     if(sortMode==="name") return displayName(a).localeCompare(displayName(b));
