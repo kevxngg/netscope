@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <h1 id="dTitle">{{ ip }}</h1>
+    <h1 id="dTitle">{{ ip }}</h1><span class="device-state" id="deviceState">-</span>
     <p><a href="/devices" style="color:var(--green)">&larr; volver al arbol</a></p>
   </div>
   <div class="actions">
@@ -24,19 +24,30 @@
 
 <div class="grid-2">
   <div class="card">
-    <div class="card-h"><span class="t">Identidad y nmap</span></div>
+    <div class="card-h"><span class="t">Identidad del dispositivo</span><span class="c" id="identityHint">-</span></div>
     <div style="padding:6px 16px 16px" id="detail" class="kv">cargando...</div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="t">Actividad de red</span><span class="c">en vivo</span></div>
+    <div class="device-metrics" id="deviceMetrics"><div><span>Total</span><b>-</b></div><div><span>Enviado</span><b>-</b></div><div><span>Recibido</span><b>-</b></div></div>
+    <div class="presence" id="presenceBox">cargando presencia...</div>
   </div>
 
   <div class="card">
     <div class="card-h">
       <span class="t">Log de conexiones</span>
-      <span style="display:flex;gap:7px"><a class="btn sm" id="exportLog" href="#">Exportar CSV</a><button class="btn sm ghost" onclick="clearLog()">Limpiar</button></span>
+      <span class="log-tools"><select id="logFilter" class="device-select" aria-label="Filtrar log"><option value="all">Todo</option><option value="dns">DNS</option><option value="sni">SNI</option><option value="http">HTTP</option></select><a class="btn sm" id="exportLog" href="#">Exportar CSV</a><button class="btn sm ghost" onclick="clearLog()">Limpiar</button></span>
     </div>
     <div style="padding:12px 14px 16px">
       <div class="log" id="log"><div class="log-empty">Activa "Inspeccionar" para capturar a donde habla este equipo.</div></div>
     </div>
   </div>
+</div>
+
+<div class="card detail-history">
+  <div class="card-h"><span class="t">Historial del dispositivo</span><span class="c" id="historyCount">-</span></div>
+  <div id="historyBox"><div class="empty">cargando historial...</div></div>
 </div>
 
 <div class="note">
