@@ -19,9 +19,35 @@ cambia la etiqueta automatica. Es mas barato y mas exacto dejar que el usuario
 corrija a mano que perseguir un algoritmo perfecto.
 """
 
+import threading
 from collections import defaultdict
 
 from . import store
+
+# resolve() hace varias lecturas y escrituras que deben ser atomicas entre si
+# (leer candidatas -> decidir -> crear/fundir). Sin esto, dos escaneos a la vez
+# podrian crear dos identidades para el mismo equipo.
+_resolve_lock = threading.Lock()
+
+# Marcadores de "no hay nombre". No sirven ni para fundir ni como etiqueta.
+_NON_NAMES = {"", "(sin nombre)", "unknown", "desconocido", "localhost",
+              "localhost.localdomain", "intel_ce_linux"}
+
+# Hostnames que muchos equipos comparten de fabrica: valen como etiqueta visible
+# ("iPhone" es mejor que nada) pero NO identifican a un equipo concreto.
+_GENERIC_HOSTNAMES = _NON_NAMES | {
+    "android", "iphone", "ipad", "ipod", "macbook", "macbook-pro",
+    "macbook-air", "galaxy", "pixel", "windows-phone", "raspberrypi",
+    "amazon", "echo", "chromecast", "google-home", "google-nest-hub",
+    "dhcp", "new-host", "espressif",
+}
+
+
+def usable_label(name) -> str:
+    """Devuelve el nombre si sirve como etiqueta visible, o '' si es un marcador
+    de 'sin nombre'. Evita guardar el literal '(sin nombre)' como label."""
+    name = (name or "").strip()
+    return "" if name.lower() in _NON_NAMES else name
 
 
 # --------------------------------------------------------------------------- #
@@ -37,8 +63,10 @@ WEIGHTS = {
     "mac_random": 0.1,   # MAC randomizada: sirve dentro de una sesion, no entre ellas
 }
 
-# Suma teorica maxima, para normalizar la confianza a 0..1
-_MAX_WEIGHT = sum(WEIGHTS.values())
+# Suma teorica maxima para normalizar la confianza a 0..1. "mac" y "mac_random"
+# son excluyentes (una observacion aporta una o la otra), asi que solo cuenta la
+# fuerte; si no, la confianza nunca llegaria a 1.0 de forma organica.
+_MAX_WEIGHT = sum(w for k, w in WEIGHTS.items() if k != "mac_random")
 
 
 # --------------------------------------------------------------------------- #
@@ -77,8 +105,9 @@ def signals_from_observation(obs: dict):
             out.append(("mac", mac, WEIGHTS["mac"]))
 
     host = (obs.get("hostname") or "").strip()
-    # descarta nombres genericos/vacios que no distinguen nada
-    if host and host.lower() not in ("(sin nombre)", "unknown", "localhost", "android"):
+    # descarta nombres genericos que NO distinguen un equipo de otro del mismo
+    # modelo (dos "iPhone" en la red no son el mismo telefono).
+    if host and host.lower() not in _GENERIC_HOSTNAMES:
         out.append(("hostname", host, WEIGHTS["hostname"]))
 
     dhcp = (obs.get("dhcp_fp") or "").strip()
@@ -105,16 +134,24 @@ def signals_from_observation(obs: dict):
 def _passes_fusion(matched_kinds: set) -> bool:
     """
     Dos observaciones son el mismo equipo si:
-      - coincide una MAC REAL (no randomizada)  -> misma NIC fisica, o
-      - coincide el hostname Y al menos una senal mas, o
-      - coinciden tres o mas senales.
-    Una MAC randomizada por si sola NO basta (rota entre sesiones).
+      - coincide una MAC real, el hostname (ya filtrado de genericos), o LA MISMA
+        MAC randomizada  -> identificador fuerte, o
+      - coinciden DOS senales independientes que no sean ambas "de sistema"
+        (dhcp_fp y os van correlados: dos moviles del mismo modelo/version los
+        comparten, asi que juntos NO bastan), o
+      - coinciden tres o mas senales distintas de `os`.
+    Una MAC randomizada solo colisiona consigo misma (46 bits aleatorios); el
+    matiz "no sirve entre sesiones" lo da que al reconectarse la MAC cambia y ya
+    no coincide, no que haya que ignorar una coincidencia exacta.
     """
-    if "mac" in matched_kinds:
+    if matched_kinds & {"mac", "mac_random", "hostname"}:
         return True
-    if "hostname" in matched_kinds and len(matched_kinds) >= 2:
+    # combinaciones de señales debiles pero INDEPENDIENTES entre si
+    if "dhcp_fp" in matched_kinds and "port_set" in matched_kinds:
         return True
-    if len(matched_kinds) >= 3:
+    if "port_set" in matched_kinds and "schedule" in matched_kinds:
+        return True
+    if len(matched_kinds - {"os"}) >= 3:
         return True
     return False
 
@@ -130,40 +167,47 @@ def resolve(site_id: int, obs: dict) -> int:
     signals = signals_from_observation(obs)
     if not signals:
         # sin ninguna senal util no podemos identificar nada; crea identidad suelta
-        return store.create_identity(site_id, label=(obs.get("ip") or ""))
+        with _resolve_lock:
+            return store.create_identity(site_id, label=(obs.get("ip") or ""))
 
-    # 1) reunir candidatas por senal coincidente
-    matched = defaultdict(set)      # identity_id -> set de kinds que coinciden
-    weight_by_id = defaultdict(float)
-    for kind, value, weight in signals:
-        for iid in store.identities_matching_signal(site_id, kind, value):
-            matched[iid].add(kind)
-            weight_by_id[iid] += weight
+    with _resolve_lock:
+        # 1) reunir candidatas por senal coincidente
+        matched = defaultdict(set)      # identity_id -> set de kinds que coinciden
+        weight_by_id = defaultdict(float)
+        for kind, value, weight in signals:
+            for iid in store.identities_matching_signal(site_id, kind, value):
+                matched[iid].add(kind)
+                weight_by_id[iid] += weight
 
-    # 2) elegir la mejor candidata que pase la regla de fusion
-    best_id, best_score = None, -1.0
-    for iid, kinds in matched.items():
-        if _passes_fusion(kinds) and weight_by_id[iid] > best_score:
-            best_id, best_score = iid, weight_by_id[iid]
+        # 2) elegir la mejor candidata que pase la regla de fusion
+        best_id, best_score = None, -1.0
+        for iid, kinds in matched.items():
+            if _passes_fusion(kinds) and weight_by_id[iid] > best_score:
+                best_id, best_score = iid, weight_by_id[iid]
 
-    # 3) crear si no hay candidata valida
-    if best_id is None:
-        best_id = store.create_identity(
-            site_id, label=(obs.get("hostname") or obs.get("ip") or ""))
+        # 3) crear si no hay candidata valida
+        if best_id is None:
+            best_id = store.create_identity(
+                site_id, label=usable_label(obs.get("hostname")))
 
-    # 4) fundir senales y refrescar metadatos (respeta identidades congeladas)
-    frozen = store.is_frozen(best_id)
-    for kind, value, weight in signals:
-        store.upsert_signal(best_id, kind, value, weight)
-    store.touch_identity(best_id)
+        # 4) fundir senales y refrescar metadatos (respeta identidades congeladas)
+        frozen = store.is_frozen(best_id)
+        for kind, value, weight in signals:
+            store.upsert_signal(best_id, kind, value, weight)
+        store.touch_identity(best_id)
 
-    if not frozen:
-        # etiqueta automatica: el mejor nombre disponible
-        host = (obs.get("hostname") or "").strip()
-        if host and host.lower() != "(sin nombre)":
-            store.set_identity_label_auto(best_id, host)
-        # confianza: suma de pesos de las senales de la identidad, normalizada
-        total = sum(s["weight"] for s in store.signals_of(best_id))
-        store.set_identity_confidence(best_id, min(1.0, total / _MAX_WEIGHT))
+        if not frozen:
+            # Etiqueta automatica. Un nombre generico ("iPhone") vale como
+            # etiqueta visible, pero NO debe pisar uno mas especifico que ya
+            # tengamos ("iPhone-de-Ana"): solo se usa si no hay etiqueta aun.
+            host = usable_label(obs.get("hostname"))
+            if host:
+                if host.lower() not in _GENERIC_HOSTNAMES:
+                    store.set_identity_label_auto(best_id, host)
+                elif not (store.get_identity(best_id) or {}).get("label"):
+                    store.set_identity_label_auto(best_id, host)
+            # confianza: suma de pesos de las senales de la identidad, normalizada
+            total = sum(s["weight"] for s in store.signals_of(best_id))
+            store.set_identity_confidence(best_id, min(1.0, total / _MAX_WEIGHT))
 
     return best_id

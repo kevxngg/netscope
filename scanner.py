@@ -44,18 +44,16 @@ def usable_name(name: str) -> bool:
     return value not in _GENERIC_NAMES and "intel_ce_linux" not in value
 
 
-def seed_caches_from_storage():
+def seed_caches():
     """Precarga fabricantes/nombres ya conocidos desde la BD (arranque instantaneo)."""
     try:
-        import storage
-        for d in storage.all_devices():
-            mac = (d.get("mac") or "").lower()
-            if not mac:
-                continue
-            if d.get("vendor"):
-                _vendor_cache.setdefault(mac, d["vendor"])
-            if usable_name(d.get("auto_name")):
-                _name_cache.setdefault(mac, d["auto_name"])
+        from core import store
+        data = store.seed_data()
+        for mac, vendor in data["vendors"].items():
+            _vendor_cache.setdefault(mac, vendor)
+        for mac, name in data["names"].items():
+            if usable_name(name):
+                _name_cache.setdefault(mac, name)
     except Exception:
         pass
 
@@ -175,6 +173,25 @@ def get_local_networks():
     return _select_networks(candidates, gw)
 
 
+def is_local_ip(ip: str) -> bool:
+    """True si la IP cae dentro de alguna red local seleccionada para escanear.
+
+    Sirve de guardarrail: intercepcion, bloqueo y escaneo profundo solo deben
+    apuntar a equipos de la propia red, nunca a IPs externas arbitrarias.
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for _, cidr, _ in get_local_networks():
+        try:
+            if addr in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def get_gateway_ip() -> str:
     try:
         from scapy.all import conf
@@ -255,6 +272,13 @@ def _netbios_name(ip: str) -> str:
 
 
 # --- mDNS / Bonjour (nombres bonitos, desde cache instantaneo) ------------- #
+def _safe_close(zc):
+    try:
+        zc.close()
+    except Exception:
+        pass
+
+
 class MDNSResolver:
     SERVICES = [
         "_workstation._tcp.local.", "_device-info._tcp.local.",
@@ -297,6 +321,13 @@ class MDNSResolver:
 
     def name_for(self, ip: str) -> str:
         return self.map.get(ip, "")
+
+    def stop(self):
+        """Cierra zeroconf en segundo plano (su close() puede bloquear en E/S;
+        los hilos son daemon, asi que el proceso sale igual)."""
+        zc, self._zc, self._browsers = self._zc, None, []
+        if zc is not None:
+            threading.Thread(target=lambda: _safe_close(zc), daemon=True).start()
 
 
 mdns = MDNSResolver()
