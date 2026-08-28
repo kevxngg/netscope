@@ -29,16 +29,25 @@ app = Flask(__name__)
 # Sitio (casa / empresa) que administra esta instalacion. Se fija en _startup().
 SITE = None
 
-# Solo se sirve en 127.0.0.1. Rechazamos Host ajenos para cerrar el vector de
+# Solo se sirve en loopback. Rechazamos Host ajenos para cerrar el vector de
 # DNS-rebinding: sin esto, una web cualquiera podria conducir esta API local
 # (que hace ARP spoofing y bloqueos) desde el navegador del usuario.
-_ALLOWED_HOSTS = {"127.0.0.1:5000", "localhost:5000", "127.0.0.1", "localhost"}
+# Se compara solo el NOMBRE, no el puerto: lo que importa es que no llegue un
+# dominio del atacante, y asi la app funciona en cualquier puerto.
+_ALLOWED_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
+
+
+def _hostname_of(host: str) -> str:
+    """Nombre del header Host, sin puerto. Soporta IPv6 con corchetes."""
+    host = (host or "").strip().lower()
+    if host.startswith("["):                      # [::1] o [::1]:5000
+        return host[1:host.index("]")] if "]" in host else host
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
 @app.before_request
 def _guard_host():
-    host = (request.host or "").lower()
-    if host not in _ALLOWED_HOSTS:
+    if _hostname_of(request.host) not in _ALLOWED_HOSTNAMES:
         return ("host no permitido", 403)
 
 _last_scan = {"devices": [], "gateway": "", "ts": 0, "enriching": False,
@@ -636,13 +645,19 @@ def _persist_traffic_window():
     window_start = int(now // _TRAFFIC_WINDOW) * _TRAFFIC_WINDOW
     by_ip_identity = {d.get("ip"): iid
                       for iid, d in _last_scan.get("by_identity", {}).items() if d.get("ip")}
+    current = {}
     for t in monitor.snapshot():
         ip = t["ip"]
         prev = _traffic_persist_prev.get(ip, (0, 0, 0))
-        d_sent = max(0, t["sent_bytes"] - prev[0])
-        d_recv = max(0, t["recv_bytes"] - prev[1])
+        # Si los contadores bajaron es que se reiniciaron ("Reiniciar contadores"):
+        # el total actual ES el delta. Sin esto el historico se quedaria en blanco
+        # hasta que el equipo superase su total anterior.
+        if t["sent_bytes"] < prev[0] or t["recv_bytes"] < prev[1]:
+            prev = (0, 0, 0)
+        d_sent = t["sent_bytes"] - prev[0]
+        d_recv = t["recv_bytes"] - prev[1]
         d_pkts = max(0, t["packets"] - prev[2])
-        _traffic_persist_prev[ip] = (t["sent_bytes"], t["recv_bytes"], t["packets"])
+        current[ip] = (t["sent_bytes"], t["recv_bytes"], t["packets"])
         iid = by_ip_identity.get(ip)
         if iid and (d_sent or d_recv):
             try:
@@ -651,6 +666,10 @@ def _persist_traffic_window():
                                          bytes_in=d_recv, bytes_out=d_sent, packets=d_pkts)
             except Exception:
                 pass
+    # Reemplazar (no actualizar) descarta IPs que ya no aparecen: si no, el dict
+    # crecería indefinidamente con cada IP externa vista alguna vez.
+    _traffic_persist_prev.clear()
+    _traffic_persist_prev.update(current)
 
 
 def _resolve_external_names():

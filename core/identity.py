@@ -29,14 +29,25 @@ from . import store
 # podrian crear dos identidades para el mismo equipo.
 _resolve_lock = threading.Lock()
 
-# Hostnames que muchos equipos comparten de fabrica: no identifican a nadie.
-_GENERIC_HOSTNAMES = {
-    "", "(sin nombre)", "unknown", "localhost", "desconocido",
+# Marcadores de "no hay nombre". No sirven ni para fundir ni como etiqueta.
+_NON_NAMES = {"", "(sin nombre)", "unknown", "desconocido", "localhost",
+              "localhost.localdomain", "intel_ce_linux"}
+
+# Hostnames que muchos equipos comparten de fabrica: valen como etiqueta visible
+# ("iPhone" es mejor que nada) pero NO identifican a un equipo concreto.
+_GENERIC_HOSTNAMES = _NON_NAMES | {
     "android", "iphone", "ipad", "ipod", "macbook", "macbook-pro",
     "macbook-air", "galaxy", "pixel", "windows-phone", "raspberrypi",
     "amazon", "echo", "chromecast", "google-home", "google-nest-hub",
-    "localhost.localdomain", "dhcp", "new-host", "espressif",
+    "dhcp", "new-host", "espressif",
 }
+
+
+def usable_label(name) -> str:
+    """Devuelve el nombre si sirve como etiqueta visible, o '' si es un marcador
+    de 'sin nombre'. Evita guardar el literal '(sin nombre)' como label."""
+    name = (name or "").strip()
+    return "" if name.lower() in _NON_NAMES else name
 
 
 # --------------------------------------------------------------------------- #
@@ -177,7 +188,7 @@ def resolve(site_id: int, obs: dict) -> int:
         # 3) crear si no hay candidata valida
         if best_id is None:
             best_id = store.create_identity(
-                site_id, label=(obs.get("hostname") or obs.get("ip") or ""))
+                site_id, label=usable_label(obs.get("hostname")))
 
         # 4) fundir senales y refrescar metadatos (respeta identidades congeladas)
         frozen = store.is_frozen(best_id)
@@ -186,11 +197,15 @@ def resolve(site_id: int, obs: dict) -> int:
         store.touch_identity(best_id)
 
         if not frozen:
-            # etiqueta automatica: el mejor nombre disponible (aunque sea generico:
-            # "iPhone" es mejor etiqueta visible que nada, solo no vale para fundir)
-            host = (obs.get("hostname") or "").strip()
-            if host and host.lower() not in ("", "(sin nombre)", "unknown"):
-                store.set_identity_label_auto(best_id, host)
+            # Etiqueta automatica. Un nombre generico ("iPhone") vale como
+            # etiqueta visible, pero NO debe pisar uno mas especifico que ya
+            # tengamos ("iPhone-de-Ana"): solo se usa si no hay etiqueta aun.
+            host = usable_label(obs.get("hostname"))
+            if host:
+                if host.lower() not in _GENERIC_HOSTNAMES:
+                    store.set_identity_label_auto(best_id, host)
+                elif not (store.get_identity(best_id) or {}).get("label"):
+                    store.set_identity_label_auto(best_id, host)
             # confianza: suma de pesos de las senales de la identidad, normalizada
             total = sum(s["weight"] for s in store.signals_of(best_id))
             store.set_identity_confidence(best_id, min(1.0, total / _MAX_WEIGHT))
