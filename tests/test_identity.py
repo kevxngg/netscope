@@ -98,6 +98,30 @@ def test_dos_iphone_genericos_no_se_fusionan():
     check("dos 'iPhone' genericos -> 2 identidades", a != b)
 
 
+def test_sin_nombre_no_se_guarda_como_etiqueta():
+    """Un equipo cuyo nombre no se pudo resolver llega como '(sin nombre)'.
+    Eso NO debe quedar guardado como etiqueta (si no, el resumen lo contaria
+    como equipo 'con nombre')."""
+    _fresh_db()
+    site = store.ensure_site("test")
+    iid = identity.resolve(site, {"mac": "aa:bb:cc:00:00:21", "ip": "10.0.0.7",
+                                  "hostname": "(sin nombre)"})
+    check("'(sin nombre)' no se guarda como label",
+          not (store.get_identity(iid)["label"] or ""))
+
+
+def test_generico_no_pisa_nombre_especifico():
+    """Un nombre generico ('iPhone') no debe sustituir a uno mas especifico
+    ya conocido ('iPhone-de-Ana')."""
+    _fresh_db()
+    site = store.ensure_site("test")
+    mac = "aa:bb:cc:00:00:31"
+    iid = identity.resolve(site, {"mac": mac, "hostname": "iPhone-de-Ana"})
+    identity.resolve(site, {"mac": mac, "hostname": "iPhone"})
+    check("generico no pisa nombre especifico",
+          store.get_identity(iid)["label"] == "iPhone-de-Ana")
+
+
 def test_identidad_congelada():
     _fresh_db()
     site = store.ensure_site("test")
@@ -113,7 +137,9 @@ if __name__ == "__main__":
     for fn in (test_mac_randomizada_reconecta, test_revinculo_por_dhcp_y_puertos,
                test_dos_moviles_mismo_so_no_se_fusionan,
                test_equipos_distintos_no_se_fusionan, test_misma_mac_random_en_sesion,
-               test_dos_iphone_genericos_no_se_fusionan, test_identidad_congelada):
+               test_dos_iphone_genericos_no_se_fusionan,
+               test_sin_nombre_no_se_guarda_como_etiqueta,
+               test_generico_no_pisa_nombre_especifico, test_identidad_congelada):
         print(fn.__doc__.strip().splitlines()[0] if fn.__doc__ else fn.__name__)
         fn()
     ok = sum(1 for _, c in _results if c)
