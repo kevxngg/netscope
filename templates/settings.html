@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 {% block title %} - Ajustes{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>Ajustes</h1><p>Notificaciones por Telegram cuando aparece un equipo desconocido.</p></div></div>
+<div class="page-head"><div><h1>Ajustes</h1><p>Sitio administrado y avisos por Telegram.</p></div></div>
+<div class="card" style="max-width:640px;margin-bottom:16px">
+  <div style="padding:18px;display:grid;gap:10px">
+    <div class="dl" style="margin-top:0">Sitio que administra esta instalación</div>
+    <input id="siteName" placeholder="casa" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 11px;font-family:var(--sans)">
+    <div class="note" style="margin-top:2px">Cada instalación administra un sitio (p. ej. <b>casa</b> o <b>empresa</b>). Las identidades no se mezclan entre sitios. Cambiarlo empieza un inventario aparte.</div>
+    <button class="btn primary" style="justify-self:start" onclick="saveSite()">Guardar sitio</button>
+  </div>
+</div>
 <div class="card" style="max-width:640px">
   <div style="padding:18px 18px 20px;display:grid;gap:14px">
     <label style="display:flex;align-items:center;gap:10px;font-size:14px">

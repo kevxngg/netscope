@@ -9,7 +9,7 @@ import json
 import urllib.parse
 import urllib.request
 
-import storage
+from core import store as storage
 
 
 def send_telegram(token, chat_id, text):

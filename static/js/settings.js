@@ -3,6 +3,7 @@ async function load(){
   document.getElementById("alerts").checked=!!s.alerts_enabled;
   document.getElementById("tgToken").value=s.tg_token||"";
   document.getElementById("tgChat").value=s.tg_chat||"";
+  const site=document.getElementById("siteName"); if(site) site.value=s.site_name||"casa";
 }
 async function save(){
   await NS.post("/api/settings",{
@@ -11,6 +12,11 @@ async function save(){
     tg_chat:document.getElementById("tgChat").value.trim(),
   });
   msg("Guardado.");
+}
+async function saveSite(){
+  const name=document.getElementById("siteName").value.trim()||"casa";
+  await NS.post("/api/settings",{site_name:name});
+  msg("Sitio cambiado a \""+name+"\". Reinicia NetScope para aplicarlo del todo.");
 }
 async function test(){
   msg("Enviando...");

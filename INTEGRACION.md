@@ -1,5 +1,13 @@
 # Integración del nuevo core — Fase 1
 
+> **Estado: INTEGRADA.** `app.py` ya usa `core/store` + `core/identity`; `storage.py`
+> se eliminó. El flujo descrito abajo es el que corre hoy. Además ya funcionan el
+> colector DHCP pasivo (`sniffer.py`), el volcado de SO/puertos de nmap a la
+> identidad (`/api/deepscan`), la persistencia de tráfico por ventana y el
+> nombrado de IPs externas. Pruebas: `python tests/test_identity.py`.
+>
+> El front enlaza por `identity_id` (`/device/<id>`, no `/device/<ip>`).
+
 Este paquete `core/` reemplaza al viejo `storage.py`. Trae el modelo de
 identidad y sitios que decidimos en el plan. **Ya está probado**: el criterio de
 la Fase 1 (un teléfono con MAC randomizada que se reconecta tres veces sigue

@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <h1 id="dTitle">{{ ip }}</h1><span class="device-state" id="deviceState">-</span>
+    <h1 id="dTitle">equipo #{{ identity_id }}</h1><span class="device-state" id="deviceState">-</span>
     <p><a href="/devices" style="color:var(--green)">&larr; volver al arbol</a></p>
   </div>
   <div class="actions">
@@ -32,6 +32,12 @@
     <div class="card-h"><span class="t">Actividad de red</span><span class="c">en vivo</span></div>
     <div class="device-metrics" id="deviceMetrics"><div><span>Total</span><b>-</b></div><div><span>Enviado</span><b>-</b></div><div><span>Recibido</span><b>-</b></div></div>
     <div class="presence" id="presenceBox">cargando presencia...</div>
+    <div id="histTraffic" class="hist-traffic"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><span class="t">Por qué es esta identidad</span><span class="c" id="signalsHint">señales</span></div>
+    <div style="padding:6px 16px 16px" id="signalsBox" class="kv">cargando…</div>
   </div>
 
   <div class="card">
@@ -57,6 +63,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script>window.DEVICE_IP="{{ ip }}";</script>
+<script>window.DEVICE_ID={{ identity_id }};</script>
 <script src="{{ url_for('static', filename='js/device.js') }}"></script>
 {% endblock %}

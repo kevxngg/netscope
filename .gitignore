@@ -16,5 +16,7 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Base de datos local
+# Base de datos local (y sus WAL/SHM y copias apartadas)
 netscope.db
+netscope.db-*
+netscope.db.old-*

@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS identities(
     site_id       INTEGER NOT NULL REFERENCES sites(id),
     label         TEXT,               -- etiqueta automatica (mejor nombre visto)
     label_manual  TEXT,               -- etiqueta puesta a mano: CONGELA la identidad
+    vendor        TEXT,               -- ultimo fabricante (OUI) conocido
     confidence    REAL DEFAULT 0,     -- suma normalizada de pesos de sus senales
     trusted       INTEGER DEFAULT 0,
     first_seen    REAL,
@@ -143,7 +144,41 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 """
 
 
+def _aside_legacy_db():
+    """Aparta un netscope.db con el esquema viejo (basado en MAC).
+
+    El esquema v2 reusa el nombre de tabla `events` con columnas distintas, asi
+    que `CREATE TABLE IF NOT EXISTS` no basta: hay que empezar con BD limpia.
+    No se borra nada; el fichero viejo queda como `netscope.db.old-<ts>`.
+    """
+    if not os.path.exists(DB):
+        return
+    try:
+        c = sqlite3.connect(DB, timeout=5)
+        try:
+            has_identities = c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='identities'"
+            ).fetchone() is not None
+            has_devices = c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='devices'"
+            ).fetchone() is not None
+        finally:
+            c.close()
+        if has_identities or not has_devices:
+            return  # ya es v2, o BD vacia/ajena: no tocar
+        backup = f"{DB}.old-{int(time.time())}"
+        os.replace(DB, backup)
+        for suffix in ("-wal", "-shm"):
+            side = DB + suffix
+            if os.path.exists(side):
+                os.replace(side, backup + suffix)
+        print(f"  NetScope: BD anterior (esquema viejo) apartada en {backup}")
+    except Exception as e:
+        print(f"  NetScope: no pude apartar la BD anterior: {e}")
+
+
 def init():
+    _aside_legacy_db()
     with _lock, _conn() as c:
         c.executescript(SCHEMA)
 
@@ -194,10 +229,27 @@ def set_identity_label_auto(identity_id, label):
 
 
 def set_identity_label_manual(identity_id, label):
-    """Etiqueta a mano: fija confianza al maximo y CONGELA la identidad."""
+    """Etiqueta a mano: CONGELA la identidad y fija confianza al maximo.
+
+    Con label vacio se descongela (vuelve a re-evaluarse por fusion); no forzamos
+    la confianza en ese caso.
+    """
+    label = (label or "").strip()
     with _lock, _conn() as c:
-        c.execute("UPDATE identities SET label_manual=?, confidence=1.0 WHERE id=?",
-                  (label, identity_id))
+        if label:
+            c.execute("UPDATE identities SET label_manual=?, confidence=1.0 WHERE id=?",
+                      (label, identity_id))
+        else:
+            c.execute("UPDATE identities SET label_manual='' WHERE id=?",
+                      (identity_id,))
+
+
+def set_identity_vendor(identity_id, vendor):
+    vendor = (vendor or "").strip()
+    if not vendor:
+        return
+    with _lock, _conn() as c:
+        c.execute("UPDATE identities SET vendor=? WHERE id=?", (vendor, identity_id))
 
 
 def set_identity_confidence(identity_id, conf):
@@ -295,20 +347,66 @@ def merge_identities(keep_id, drop_id):
 # --------------------------------------------------------------------------- #
 def record_observation(site_id, source, identity_id=None, mac="", ip="",
                        hostname="", vendor="", dhcp_fp="", os_guess="",
-                       raw_json=""):
+                       raw_json="", dedupe_secs=3600):
+    """Registra una observacion cruda.
+
+    `dedupe_secs`: si la ultima observacion de esta identidad es identica
+    (misma fuente/mac/ip/hostname) y de hace menos de ese tiempo, NO se inserta
+    otra fila. Sin esto, un re-escaneo cada 15 s multiplicaria la tabla por
+    ~5.000 filas/dia por equipo. Pasa 0 para forzar siempre la insercion.
+    """
+    now = time.time()
     with _lock, _conn() as c:
+        if dedupe_secs and identity_id is not None:
+            prev = c.execute(
+                "SELECT ts,source,mac,ip,hostname FROM observations "
+                "WHERE identity_id=? ORDER BY ts DESC LIMIT 1",
+                (identity_id,)).fetchone()
+            if (prev and now - (prev["ts"] or 0) < dedupe_secs
+                    and prev["source"] == source and (prev["mac"] or "") == mac
+                    and (prev["ip"] or "") == ip
+                    and (prev["hostname"] or "") == hostname):
+                return
         c.execute(
             "INSERT INTO observations"
             "(site_id,ts,source,identity_id,mac,ip,hostname,vendor,dhcp_fp,"
             " os_guess,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (site_id, time.time(), source, identity_id, mac, ip, hostname,
+            (site_id, now, source, identity_id, mac, ip, hostname,
              vendor, dhcp_fp, os_guess, raw_json))
 
 
-def purge_observations(older_than_secs=7 * 86400):
+def purge_observations(older_than_secs=30 * 86400):
     cutoff = time.time() - older_than_secs
     with _lock, _conn() as c:
         c.execute("DELETE FROM observations WHERE ts < ?", (cutoff,))
+
+
+def last_observation(identity_id):
+    """Ultima observacion cruda de una identidad (mac/ip/vendor conocidos)."""
+    with _lock, _conn() as c:
+        row = c.execute(
+            "SELECT * FROM observations WHERE identity_id=? ORDER BY ts DESC LIMIT 1",
+            (identity_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def seed_data():
+    """Fabricante y nombre por MAC conocida, para precargar las caches del scanner."""
+    out = {"vendors": {}, "names": {}}
+    with _lock, _conn() as c:
+        rows = c.execute(
+            "SELECT i.label AS label, i.vendor AS vendor, s.value AS mac "
+            "FROM identity_signals s JOIN identities i ON i.id = s.identity_id "
+            "WHERE s.kind IN ('mac','mac_random')")
+        for r in rows:
+            mac = (r["mac"] or "").lower()
+            if not mac:
+                continue
+            if r["vendor"]:
+                out["vendors"].setdefault(mac, r["vendor"])
+            if r["label"]:
+                out["names"].setdefault(mac, r["label"])
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -340,6 +438,25 @@ def traffic_for_identity(identity_id, since=0):
         return [dict(r) for r in c.execute(
             "SELECT * FROM traffic_samples WHERE identity_id=? AND window_start>=? "
             "ORDER BY window_start DESC", (identity_id, since))]
+
+
+def traffic_daily(site_id, identity_id, days=7):
+    """Bytes in/out agregados por dia (para la grafica historica de la ficha)."""
+    since = time.time() - days * 86400
+    with _lock, _conn() as c:
+        rows = c.execute(
+            "SELECT CAST(window_start/86400 AS INT) AS day, "
+            "       SUM(bytes_in) AS bytes_in, SUM(bytes_out) AS bytes_out "
+            "FROM traffic_samples WHERE site_id=? AND identity_id=? AND window_start>=? "
+            "GROUP BY day ORDER BY day", (site_id, identity_id, since))
+        return [{"day_ts": r["day"] * 86400, "bytes_in": r["bytes_in"] or 0,
+                 "bytes_out": r["bytes_out"] or 0} for r in rows]
+
+
+def purge_traffic(older_than_secs=30 * 86400):
+    cutoff = time.time() - older_than_secs
+    with _lock, _conn() as c:
+        c.execute("DELETE FROM traffic_samples WHERE window_start < ?", (cutoff,))
 
 
 # --------------------------------------------------------------------------- #

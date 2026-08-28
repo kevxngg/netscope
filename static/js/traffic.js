@@ -90,11 +90,13 @@ async function load(){
   const el=document.getElementById("traf");
   if(!rows.length){ el.innerHTML=`<div class="empty">esperando paquetes...</div>`; return; }
   const max=Math.max(...rows.map(t=>t.bytes),1);
-  el.innerHTML=rows.slice(0,50).map(t=>{
+  el.innerHTML=rows.slice(0,60).map(t=>{
     const w=Math.max(2,(t.bytes/max)*100), tot=t.bytes||1;
     const sp=(t.sent_bytes/tot)*100, rp=(t.recv_bytes/tot)*100;
-    const label=(t.name&&t.name!=="(sin nombre)")?NS.esc(t.name):(t.vendor?NS.esc(t.vendor):"IP externa/desconocida");
-    return `<div class="trow">
+    const named=(t.name&&t.name!=="(sin nombre)")?t.name:(t.host||t.vendor||"");
+    const label=named?NS.esc(named):(t.is_local?"dispositivo local":"IP externa");
+    const click=t.identity_id?` onclick="location.href='/device/${t.identity_id}'" style="cursor:pointer"`:"";
+    return `<div class="trow"${click}>
       <div class="tt"><div class="nm">${label}<span class="ip num">${t.ip}</span>${t.is_local?'':'<span class="ext">externa</span>'}</div>
       <div class="tot num">${NS.fmt(t.bytes)} &middot; ${t.packets} pkt</div></div>
       <div class="bar" style="width:${w}%"><div class="s" style="width:${sp}%"></div><div class="r" style="width:${rp}%"></div></div>

@@ -32,6 +32,30 @@ def _send_arp(**fields):
 # --------------------------------------------------------------------------- #
 #  Reenvio de IP (para no cortarle internet al objetivo)
 # --------------------------------------------------------------------------- #
+# Estado del servicio RemoteAccess de Windows ANTES de que lo toquemos, para
+# poder dejarlo como estaba al terminar (start type + si estaba corriendo).
+_win_remoteaccess_prev = {"start": None, "running": None}
+
+
+def _win_query_remoteaccess():
+    try:
+        cfg = subprocess.run(["sc", "qc", "RemoteAccess"], capture_output=True,
+                             text=True, timeout=5).stdout
+        state = subprocess.run(["sc", "query", "RemoteAccess"], capture_output=True,
+                               text=True, timeout=5).stdout
+    except Exception:
+        return {"start": None, "running": None}
+    start = None
+    for line in cfg.splitlines():
+        if "START_TYPE" in line:
+            up = line.upper()
+            start = ("disabled" if "DISABLED" in up else
+                     "demand" if "DEMAND" in up else
+                     "auto" if "AUTO" in up else None)
+    running = ("RUNNING" in state.upper()) if state else None
+    return {"start": start, "running": running}
+
+
 def enable_ip_forwarding():
     system = platform.system()
     try:
@@ -43,6 +67,8 @@ def enable_ip_forwarding():
                            capture_output=True, timeout=5)
         elif system == "Windows":
             # Requiere admin. Puede necesitar reinicio la primera vez.
+            if _win_remoteaccess_prev["start"] is None:
+                _win_remoteaccess_prev.update(_win_query_remoteaccess())
             subprocess.run(
                 ["reg", "add",
                  r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
@@ -71,6 +97,17 @@ def disable_ip_forwarding():
                  r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
                  "/v", "IPEnableRouter", "/t", "REG_DWORD", "/d", "0", "/f"],
                 capture_output=True, timeout=5)
+            # Deja RemoteAccess como estaba antes de que lo tocaramos.
+            prev = _win_remoteaccess_prev
+            if prev["start"] is not None:
+                if not prev["running"]:
+                    subprocess.run(["net", "stop", "RemoteAccess"],
+                                   capture_output=True, timeout=10)
+                if prev["start"] in ("disabled", "demand", "auto"):
+                    subprocess.run(
+                        ["sc", "config", "RemoteAccess", "start=", prev["start"]],
+                        capture_output=True, timeout=5)
+                prev["start"] = prev["running"] = None
     except Exception:
         pass
 

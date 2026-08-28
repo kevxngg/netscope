@@ -28,7 +28,7 @@ async function load(){
   document.getElementById("securityState").textContent=checks.every(x=>x[1])?"listo":"revisar";
   document.getElementById("securityBox").innerHTML=checks.map(([name,ok])=>`<div><span class="status-mark ${ok?'ok':'warn'}">${ok?'OK':'!'}</span>${name}</div>`).join("");
   const events=s.events||[];
-  document.getElementById("eventsBox").innerHTML=events.length?events.map(e=>`<div class="event-row"><span>${NS.esc(e.type||"evento")}</span><b>${NS.esc(e.detail||e.ip||"-")}</b></div>`).join(""):`<div class="empty">sin eventos recientes</div>`;
+  document.getElementById("eventsBox").innerHTML=events.length?events.map(e=>`<div class="event-row"><span>${NS.esc(e.type||"evento")}</span><b>${NS.esc(e.label||e.detail||"-")}</b></div>`).join(""):`<div class="empty">sin eventos recientes</div>`;
   const sys = await NS.get("/api/system");
   const mark = o => o.ok ? "OK" : "falta";
   document.getElementById("sysBox").innerHTML =

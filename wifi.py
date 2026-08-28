@@ -269,5 +269,4 @@ def get_public_network_info() -> dict:
 
 
 if __name__ == "__main__":
-    import json
     print(json.dumps(get_wifi_info(), indent=2, ensure_ascii=False))
