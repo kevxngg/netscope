@@ -104,7 +104,6 @@ def _enrich_and_store(devices, own_ips):
                                          vendor=d.get("vendor", ""), dhcp_fp=dhcp_fp)
                 by_identity[iid] = d
                 ident = store.get_identity(iid) or {}
-                d["custom_name"] = ident.get("label_manual") or ""
                 if iid not in prev_known and not first_run:
                     label = (ident.get("label_manual") or ident.get("label")
                              or d.get("vendor") or "equipo")
@@ -186,7 +185,6 @@ def _identity_view(ident, online, traffic_by_ip, last_obs=None):
         "label": ident.get("label") or "",
         "label_manual": ident.get("label_manual") or "",
         "name": label or "(sin nombre)",
-        "custom_name": ident.get("label_manual") or "",
         "confidence": round(ident.get("confidence") or 0.0, 2),
         "trusted": bool(ident.get("trusted")),
         "first_seen": ident.get("first_seen"),
@@ -360,7 +358,7 @@ def api_devices():
         stats = traffic_by_ip.get(d.get("ip"), {})
         rows.append({
             "identity_id": None, "label": "", "label_manual": "",
-            "name": d.get("name") or "(sin nombre)", "custom_name": "",
+            "name": d.get("name") or "(sin nombre)",
             "confidence": 0.0, "trusted": False, "online": True,
             "ip": d.get("ip", ""), "mac": d.get("mac", ""),
             "vendor": d.get("vendor", ""), "iface": d.get("iface", ""),
@@ -468,9 +466,6 @@ def api_device_name(identity_id):
         return jsonify({"ok": False, "error": "identidad no encontrada"}), 404
     name = (request.json or {}).get("name", "").strip()
     store.set_identity_label_manual(identity_id, name)
-    d = _online_device_for(identity_id)
-    if d is not None:
-        d["custom_name"] = name
     return jsonify({"ok": True})
 
 

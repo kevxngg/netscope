@@ -1,77 +1,92 @@
-# Subir esto a GitHub — paso a paso
+# Trabajar con git en este repo
 
-Tu repo ya existe en `github.com/kevxngg/netscope` con el código viejo. Lo que
-cambia aquí es que se **añade** la carpeta `core/` y dos guías. La forma limpia
-de subirlo, conservando el historial del repo, es esta.
+Repositorio: `github.com/kevxngg/netscope`
 
-## Camino recomendado (conserva el historial)
+## Subir cambios (el día a día)
 
-Abre una terminal (la de VSCode sirve: menú *Terminal → New Terminal*).
+Un solo comando. Cambia solo el texto entre comillas:
 
-```bash
-# 1. Clona tu repo actual en una carpeta nueva (trae todo el historial)
-git clone https://github.com/kevxngg/netscope.git
-cd netscope
+**PowerShell** (terminal por defecto de VSCode en Windows):
 
-# 2. Copia SOLO lo nuevo desde el zip descomprimido a esta carpeta:
-#      - la carpeta  core/
-#      - los archivos INTEGRACION.md  y  GIT.md
-#    (puedes arrastrarlos en VSCode o en el explorador de archivos)
-
-# 3. Primer commit: el núcleo nuevo
-git add core/
-git commit -m "feat(core): capa de datos por identidad y motor de resolución
-
-Reemplaza el modelo basado en MAC por identidades persistentes.
-La MAC pasa a ser una señal más; añade site_id, señales con peso,
-observaciones efímeras y tráfico agregado por ventana. Resuelve el
-problema de MAC randomizada: reconexiones de un mismo equipo colapsan
-en una sola identidad."
-
-# 4. Segundo commit: la documentación
-git add INTEGRACION.md GIT.md
-git commit -m "docs: guía de integración de la Fase 1 y guía de git"
-
-# 5. Sube todo
-git push origin main
+```powershell
+git add -A; git commit -m "describe aqui tu cambio"; git push
 ```
 
-Si tu rama principal se llama `master` en vez de `main`, cambia la última línea
-por `git push origin master`. Para saberlo: `git branch` te muestra la actual.
-
-## Si es la primera vez que usas git en esta máquina
-
-Antes del paso 3, identifícate una vez (usa el correo de tu cuenta de GitHub):
+**Git Bash:**
 
 ```bash
-git config --global user.name "kevxngg"
-git config --global user.email "TU_CORREO_DE_GITHUB"
+git add -A && git commit -m "describe aqui tu cambio" && git push
 ```
 
-Al hacer `git push`, GitHub te pedirá autenticación. Si te pide contraseña, **no
-es la de tu cuenta**: es un *Personal Access Token*. Se crea en
-GitHub → Settings → Developer settings → Personal access tokens → *Generate new
-token (classic)*, con el permiso `repo` marcado. Pega ese token como contraseña.
+> En **PowerShell 5.1 el `&&` no existe** (da error de sintaxis): hay que
+> encadenar con `;`. En Git Bash sí funciona `&&`. Mira el nombre en la pestaña
+> del terminal si no estás seguro de cuál tienes.
 
-## Alternativa: no tienes el repo clonado y quieres subir esta carpeta tal cual
+`git add -A` sube todo lo modificado de golpe. El [`.gitignore`](.gitignore) ya
+excluye lo que no debe subir (`venv/`, `netscope.db`, `__pycache__/`), pero si
+alguna vez dejas algo sensible en la carpeta —un token, una captura de red—
+repasa `git status` antes de commitear: `-A` no pregunta.
 
-Solo si NO te importa el historial anterior (lo sobrescribe):
+## Ver qué tienes pendiente
 
-```bash
-cd netscope           # la carpeta descomprimida del zip
-git init
-git add .
-git commit -m "feat: NetScope con núcleo de identidad (Fase 1)"
-git branch -M main
-git remote add origin https://github.com/kevxngg/netscope.git
-git push -u origin main --force
+```powershell
+git status; git log origin/main..main --oneline
 ```
 
-El `--force` pisa lo que haya en GitHub. Úsalo solo si estás seguro.
+Si el segundo comando no imprime nada, no hay commits sin subir.
 
-## Comprobar que subió bien
+## Autenticación
 
-```bash
-git log --oneline -5      # deberías ver tus commits nuevos arriba
-git status                # "nothing to commit, working tree clean"
+Cuando `git push` pida contraseña **no es la de tu cuenta de GitHub**: es un
+*Personal Access Token*. Se crea en GitHub → Settings → Developer settings →
+Personal access tokens → *Generate new token (classic)*, marcando el permiso
+`repo`. Ese token se pega donde pide la contraseña.
+
+## Identidad (ya configurada)
+
 ```
+user.name   kevxngg
+user.email  kevxngg@gmail.com
+```
+
+Comprobar en cualquier momento:
+
+```powershell
+git config user.name; git config user.email
+```
+
+> **Importante:** el email debe ser el de tu cuenta de GitHub. Si no coincide,
+> GitHub trata esos commits como de otra persona y **no cuentan en tu gráfico de
+> contribuciones**. Ya pasó una vez: los primeros 30 commits de este repo se
+> hicieron con el texto de ejemplo `TU_CORREO_DE_GITHUB` sin sustituir, y hubo
+> que reescribir toda la historia para arreglarlo.
+
+## Trabajar en una rama
+
+Para un cambio grande que quieras probar antes de que toque `main`:
+
+```powershell
+git checkout -b nombre-de-la-rama
+# ...trabajas y commiteas normal...
+git push -u origin nombre-de-la-rama
+```
+
+Cuando esté probado, fusionar y limpiar:
+
+```powershell
+git checkout main; git merge --no-ff nombre-de-la-rama; git push
+git branch -d nombre-de-la-rama; git push origin --delete nombre-de-la-rama
+```
+
+## Deshacer
+
+```powershell
+git restore archivo.py              # descartar cambios no commiteados de un archivo
+git restore .                       # descartar TODOS los cambios no commiteados
+git reset --soft HEAD~1             # deshacer el ultimo commit, conservando los cambios
+git revert <hash>                   # commit nuevo que deshace uno ya subido (seguro)
+```
+
+`git revert` es lo correcto para deshacer algo **ya subido**: no reescribe la
+historia. Evita `reset --hard` y `push --force` salvo que sepas exactamente por
+qué los necesitas — cambian los hashes y rompen el repo a quien lo haya clonado.

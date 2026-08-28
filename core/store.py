@@ -1,12 +1,12 @@
 """
-core/store.py — Capa de datos de NetScope v2 (SQLite).
+core/store.py — Capa de datos de NetScope (SQLite).
 
-Reemplaza al viejo storage.py. Cambios de fondo respecto a la version anterior:
+Decisiones de fondo del esquema:
 
-  - La MAC YA NO es la identidad del equipo. Un telefono moderno rota su MAC por
-    red, asi que usarla como clave primaria convertia cada reconexion en un
-    "equipo nuevo". Ahora la verdad persistente es la tabla `identities`, y la
-    MAC es solo UNA senal mas (ver core/identity.py).
+  - La MAC NO es la identidad del equipo. Un telefono moderno rota su MAC por
+    red, asi que usarla como clave primaria convertiria cada reconexion en un
+    "equipo nuevo". La verdad persistente es la tabla `identities`, y la MAC es
+    solo UNA senal mas (ver core/identity.py).
 
   - Todo lleva `site_id`. Cada instalacion administra un sitio (casa O empresa),
     pero el esquema distingue sitios desde el dia uno: unificar dos sitios el dia
