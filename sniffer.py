@@ -70,12 +70,38 @@ class TrafficMonitor:
         self._running = False
         self._local_ips = set()
         self._inspected = set()   # solo estas IPs reciben analisis SNI/HTTP
+        self._dhcp = {}           # mac -> huella DHCP (opcion 55 [+ 60])
+        self._ext_names = {}      # ip externa -> dominio (de respuestas DNS / SNI)
+        self._ptr_tried = set()   # ips a las que ya se les intento DNS inverso
 
     def set_local_ips(self, ips):
         self._local_ips = set(ips)
 
     def set_inspected(self, ips):
         self._inspected = set(ips)
+
+    def dhcp_fp_for(self, mac):
+        """Huella DHCP observada para una MAC (vacio si aun no se vio ningun DHCP)."""
+        return self._dhcp.get((mac or "").lower(), "")
+
+    _MAX_EXT_NAMES = 8000
+
+    def name_for_ip(self, ip):
+        return self._ext_names.get(ip, "")
+
+    def _note_ext(self, ip, name):
+        if ip and name and (ip in self._ext_names
+                            or len(self._ext_names) < self._MAX_EXT_NAMES):
+            self._ext_names.setdefault(ip, name)
+
+    def note_name(self, ip, name):
+        if not ip:
+            return
+        self._ptr_tried.add(ip)
+        self._note_ext(ip, name)
+
+    def ptr_tried(self, ip):
+        return ip in self._ptr_tried
 
     def _add_event(self, ip, kind, value):
         dq = self.log[ip]
@@ -103,20 +129,36 @@ class TrafficMonitor:
                 d = self.stats[dst]; d[0]+=1; d[1]+=size; d[3]+=size; d[4]=s[4]
 
             insp_src = src in self._inspected
-            # DNS (barato, util siempre para IPs inspeccionadas o propias)
             udp = pkt.getlayer(UDP)
+
+            # DHCP (puertos 67/68): huella de opciones -> re-vincula un equipo
+            # cuando SOLO cambio la MAC. Barato: los DHCP son poco frecuentes.
+            if udp is not None and (udp.dport == 67 or udp.dport == 68
+                                    or udp.sport == 67 or udp.sport == 68):
+                self._handle_dhcp(pkt)
+                return
+
+            # DNS (barato, util siempre para IPs inspeccionadas o propias)
             if udp is not None and (udp.dport == 53 or udp.sport == 53):
-                if insp_src or src in self._local_ips:
-                    try:
-                        from scapy.layers.dns import DNSQR
+                try:
+                    from scapy.layers.dns import DNSQR, DNSRR
+                    if (insp_src or src in self._local_ips):
                         q = pkt.getlayer(DNSQR)
                         if q is not None and q.qname:
                             name = q.qname.decode(errors="ignore").rstrip(".")
                             if name and not name.endswith(".arpa"):
                                 with self._lock:
                                     self._add_event(src, "dns", name)
-                    except Exception:
-                        pass
+                    # respuestas: mapea IP externa -> dominio (para nombrar peers)
+                    ans = pkt.getlayer(DNSRR)
+                    while ans is not None:
+                        if getattr(ans, "type", None) in (1, 28) and ans.rdata:  # A / AAAA
+                            rr = ans.rrname.decode(errors="ignore").rstrip(".") if ans.rrname else ""
+                            addr = ans.rdata if isinstance(ans.rdata, str) else str(ans.rdata)
+                            self._note_ext(addr, rr)
+                        ans = ans.payload.getlayer(DNSRR) if ans.payload else None
+                except Exception:
+                    pass
                 return
 
             # SNI / HTTP SOLO para IPs interceptadas (evita el analisis masivo)
@@ -133,11 +175,46 @@ class TrafficMonitor:
                 if sni:
                     with self._lock:
                         self._add_event(src, "sni", sni)
+                    self._note_ext(dst, sni)
             elif tcp.dport == 80:
                 url = parse_http(load)
                 if url:
                     with self._lock:
                         self._add_event(src, "http", url)
+        except Exception:
+            pass
+
+    def _handle_dhcp(self, pkt):
+        try:
+            from scapy.layers.dhcp import DHCP, BOOTP
+        except Exception:
+            return
+        try:
+            dhcp = pkt.getlayer(DHCP)
+            bootp = pkt.getlayer(BOOTP)
+            if dhcp is None or bootp is None or not dhcp.options:
+                return
+            opts = {}
+            for o in dhcp.options:
+                if not isinstance(o, (tuple, list)) or len(o) < 2:
+                    continue
+                # scapy da la opcion como ('clave', valor) o ('clave', v1, v2, ...)
+                opts[o[0]] = list(o[1:]) if len(o) > 2 else o[1]
+            prl = opts.get("param_req_list")
+            if not prl:
+                return
+            if not isinstance(prl, (list, tuple)):
+                prl = [prl]
+            fp = ",".join(str(x) for x in prl)
+            vcls = opts.get("vendor_class_id")
+            if vcls:
+                if isinstance(vcls, bytes):
+                    vcls = vcls.decode(errors="ignore")
+                fp += "|" + str(vcls)
+            raw = bytes(bootp.chaddr)[:6]
+            mac = ":".join("%02x" % b for b in raw)
+            if mac and mac != "00:00:00:00:00:00":
+                self._dhcp[mac.lower()] = fp
         except Exception:
             pass
 
@@ -170,6 +247,7 @@ class TrafficMonitor:
                 "ip": ip, "packets": s[0], "bytes": s[1],
                 "sent_bytes": s[2], "recv_bytes": s[3], "last_seen": s[4],
                 "is_local": ip in self._local_ips,
+                "host": "" if ip in self._local_ips else self._ext_names.get(ip, ""),
             } for ip, s in self.stats.items()]
         data.sort(key=lambda x: x["bytes"], reverse=True)
         return data

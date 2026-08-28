@@ -1,11 +1,11 @@
-@import url('https://fonts.cdnfonts.com/css/sf-pro-display');
-@import url('https://fonts.cdnfonts.com/css/sf-pro-text');
+/* Fuentes del sistema: NetScope no descarga nada de internet. En macOS/iOS
+   sale San Francisco, en Windows Segoe UI, en Linux la sans del sistema. */
 
 /* ---------- Temas ---------- */
 :root{
-  --sans:'SF Pro Text','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  --display:'SF Pro Display','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --num:'SF Pro Text',-apple-system,'Segoe UI',sans-serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  --display:var(--sans);
+  --num:var(--sans);
 }
 /* Oscuro (por defecto) */
 :root, [data-theme="dark"]{
@@ -132,6 +132,10 @@ a{color:inherit;text-decoration:none}
 .dev .nm{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dev .vn{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .dev .self{color:var(--amber);font-size:11px;border:1px solid var(--amber);border-radius:6px;padding:0 6px;margin-left:6px}
+.conf{font-size:10px;border-radius:6px;padding:0 6px;margin-left:6px;border:1px solid var(--border);color:var(--muted)}
+.conf.hi{color:var(--green);border-color:var(--green-dim)}
+.conf.mid{color:var(--amber);border-color:#8d6c28}
+.conf.lo{color:var(--faint)}
 .dev .acts{display:flex;gap:7px;justify-self:end}
 .tag{font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:2px 7px}
 .tag.on{color:var(--green);border-color:var(--green)}
@@ -188,6 +192,21 @@ a{color:inherit;text-decoration:none}
 .identity-grid,.device-metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border-soft);margin-top:8px}.identity-grid>div,.device-metrics>div{background:var(--surface);padding:10px}.identity-grid span,.device-metrics span{display:block;color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px}.identity-grid b,.device-metrics b{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis}.identity-grid .mac{color:var(--muted)}.device-note{color:var(--muted);font-size:12px;margin-bottom:8px}.presence{padding:12px 14px;color:var(--muted);font-size:12px;border-top:1px solid var(--border-soft)}.log-tools{display:flex;align-items:center;gap:7px}.detail-history{margin-top:16px}.history-row{display:grid;grid-template-columns:90px 75px 1fr;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border-soft);font-size:12px}.history-row:last-child{border-bottom:0}.history-row .time{color:var(--faint)}.history-type{color:var(--amber);text-transform:uppercase;font-size:10px}
 .note{margin-top:16px;padding:12px 15px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:12.5px;line-height:1.6}
 .note b{color:var(--amber)}
+
+/* señales de identidad */
+.sig-row{display:grid;grid-template-columns:130px 1fr 40px;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-soft);font-size:12.5px;align-items:baseline}
+.sig-row:last-child{border-bottom:0}
+.sig-kind{color:var(--green-dim);text-transform:uppercase;font-size:10px;letter-spacing:.5px}
+.sig-val{color:var(--text);word-break:break-all}
+.sig-w{color:var(--faint);font-size:11px;text-align:right}
+
+/* mini-gráfica histórica en la ficha */
+.hist-traffic{padding:10px 14px 4px;border-top:1px solid var(--border-soft)}
+.hist-title{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px}
+.hist-bars{display:flex;gap:8px;align-items:flex-end;height:64px}
+.hist-bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.hist-bar i{display:block;width:100%;max-width:26px;background:var(--green);border-radius:3px 3px 0 0;opacity:.8}
+.hist-bar span{color:var(--faint);font-size:10px}
 
 /* ---------- Responsive ---------- */
 @media (max-width:900px){

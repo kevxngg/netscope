@@ -14,10 +14,12 @@ web tipo terminal que corre en tu propia máquina.
 
 ## ¿Qué es?
 
-Una herramienta local (no sube nada a internet) para vigilar y administrar tu
-red. Pensada para saber en todo momento qué hay conectado, detectar equipos
-desconocidos y ver cómo se comporta cada dispositivo, tanto en la red de casa
-como en la de la empresa.
+Una herramienta local para vigilar y administrar tu red. Corre solo en tu
+máquina y **no sube tus datos a ningún servidor**; las únicas salidas a internet
+son opcionales y acotadas: geolocalización aproximada de tu IP pública, el test
+de velocidad y la descarga inicial de la base de fabricantes (OUI). Pensada para
+saber en todo momento qué hay conectado, detectar equipos desconocidos y ver
+cómo se comporta cada dispositivo, en casa o en la empresa.
 
 ## ¿Qué hace?
 
@@ -25,6 +27,7 @@ como en la de la empresa.
 |---|---|
 | **Árbol de la red** | El router como raíz y cada dispositivo como rama, con nombre, fabricante, IP y MAC. |
 | **Inventario de dispositivos** | Busca, filtra y ordena equipos conectados o ausentes; muestra tipo estimado, tráfico, confianza y última vez visto. |
+| **Identidad estable** | Un equipo físico = una identidad, aunque rote su MAC (privacidad de iOS/Android). La MAC es solo una señal más, junto a nombre, huella DHCP, SO y puertos; cada una con un peso. Ver «Cómo funciona». |
 | **Nombres reales** | Combina mDNS/Bonjour, DNS inverso, NetBIOS y fabricante (OUI) para identificar cada equipo. |
 | **Escaneo profundo** | Con `nmap`: sistema operativo, puertos abiertos y servicio/versión de cada equipo. |
 | **Tráfico por dispositivo** | Bytes y paquetes en vivo, con barras de subida y bajada. |
@@ -144,6 +147,16 @@ Hace un **ARP scan** del segmento de red para encontrar todo lo conectado, y
 luego resuelve el nombre de cada equipo por orden: mDNS/Bonjour → DNS inverso →
 NetBIOS → fabricante por MAC.
 
+Cada observación se funde en una **identidad**: la verdad persistente no es la
+MAC (los móviles la rotan por privacidad) sino la combinación de señales —
+MAC real (peso 1,0), nombre de red (0,9), huella DHCP (0,5), puertos abiertos
+(0,5), SO (0,4)—. Dos observaciones son el mismo equipo si coincide una MAC real,
+o el nombre de red, o una señal «ancla» (huella DHCP) más otra, o tres señales
+cualesquiera. Así, un teléfono que se reconecta con MAC nueva sigue siendo **una**
+identidad en vez de generar un equipo fantasma cada vez. Poner un nombre a mano
+**congela** la identidad (deja de re-evaluarse). Cada instalación administra un
+**sitio** (casa o empresa); las identidades no se mezclan entre sitios.
+
 Cuando hay varias interfaces, primero elige la red que contiene el gateway y
 descarta adaptadores virtuales como WSL, VPN, Docker o Bluetooth. El ARP se
 envía por la interfaz seleccionada, evitando que un adaptador virtual devuelva
@@ -164,15 +177,16 @@ por IP, nombre, tráfico, última conexión o fabricante. El tipo se estima de
 forma conservadora usando nombres y fabricantes conocidos: cámara, celular,
 computador, router, impresora, TV/consola u otro dispositivo.
 
-Al abrir un equipo se muestra su identidad, estado, tráfico, veces visto,
-historial de eventos y un log filtrable. Las acciones de confianza e inspección
-están disponibles desde la ficha y el inventario.
+Al abrir un equipo se muestra su identidad (con **las señales que la sostienen** y
+su confianza), estado, tráfico en vivo, una mini-gráfica de tráfico de los últimos
+7 días, historial de eventos y un log filtrable. Las acciones de confianza e
+inspección están disponibles desde la ficha y el inventario.
 
 ### Interfaz (multipágina, estilo GitHub)
-La app ya no vive en un solo `index.html`: cada sección tiene su propia ruta
-(`/` resumen, `/devices` árbol, `/traffic` tráfico, `/device/<ip>` detalle,
-`/system` estado), con una barra lateral tipo GitHub, tema claro/oscuro y la
-fuente **SF Pro**.
+Cada sección tiene su propia ruta (`/` resumen, `/devices` árbol, `/traffic`
+tráfico, `/device/<id>` detalle por identidad, `/system` estado), con una barra
+lateral tipo GitHub, tema claro/oscuro y **fuentes del sistema** (nada se descarga
+de internet).
 
 ### Log de conexiones y enlaces
 En la página de cada dispositivo hay un **log en vivo** de a dónde habla, que no
@@ -219,23 +233,28 @@ netscope/
 ├── app.py              # servidor (waitress) : rutas de páginas + API
 ├── scanner.py          # descubrimiento de dispositivos (ARP) + nombres en paralelo
 ├── diagnostico.py      # diagnóstico de requisitos, interfaces, gateway y ARP
-├── sniffer.py          # captura + log (DNS / SNI / HTTP), optimizado
-├── mitm.py             # intercepción selectiva (ARP spoofing)
+├── sniffer.py          # captura + log (DNS / SNI / HTTP) + huella DHCP + nombres de IPs
+├── mitm.py             # intercepción y bloqueo selectivos (ARP spoofing)
 ├── deepscan.py         # wrapper de nmap (SO, puertos, servicios)
-├── wifi.py             # info de la red Wi-Fi (SSID, señal, canal)
-├── speedtest.py        # test de velocidad (latencia / descarga / subida)
-├── storage.py          # base de datos local (SQLite): equipos, eventos, ajustes
+├── wifi.py             # info de la red Wi-Fi (SSID, señal, canal) + IP pública
 ├── notify.py           # notificaciones por Telegram (opcional)
 ├── platform_setup.py   # detección de SO, permisos, dependencias y elevación
+├── core/
+│   ├── store.py        # capa de datos v2 (SQLite): identidades, señales, sitios, tráfico
+│   └── identity.py     # motor de resolución de identidad (fusión de señales con peso)
+├── tests/test_identity.py   # pruebas del motor de identidad (python tests/test_identity.py)
 ├── requirements.txt
 ├── static/
 │   ├── css/app.css
-│   ├── img/logo-mark.png
 │   └── js/             # common, overview, devices, traffic, device, speed, history, settings, system
 └── templates/
     ├── base.html       # topbar (logo) + barra lateral
     └── overview · devices · traffic · speed · device · history · settings · system (.html)
 ```
+
+> El test de velocidad corre **en el navegador** (contra Cloudflare), no en el
+> servidor. La base de datos vive en `netscope.db` (SQLite, esquema v2); al
+> arrancar sobre una BD del esquema viejo se aparta como `netscope.db.old-…`.
 
 ## Distribución (ejecutable clicable)
 
@@ -243,7 +262,10 @@ Para no instalar Python en cada máquina:
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --add-data "templates:templates" app.py
+pyinstaller --onefile \
+  --add-data "templates:templates" \
+  --add-data "static:static" \
+  --collect-submodules core app.py
 ```
 
 En **Windows** el separador es `;` → `--add-data "templates;templates"`.
@@ -255,18 +277,26 @@ El binario queda en `dist/` (igual necesita admin + Npcap/nmap).
 
 - [x] Escaneo ARP con selección de interfaz y filtro de adaptadores virtuales.
 - [x] Identificación por mDNS, DNS inverso, NetBIOS y fabricante OUI.
+- [x] **Identidades persistentes** con fusión de señales (MAC real, nombre, huella
+      DHCP, SO, puertos); un móvil con MAC rotatoria no genera fantasmas.
+- [x] **Colector DHCP pasivo** que aporta la huella para re-vincular equipos.
+- [x] Señales de nmap (SO y puertos) volcadas a la identidad y persistidas.
 - [x] Tráfico en vivo con contadores por dispositivo y gráfica suavizada.
+- [x] **Tráfico histórico** agregado por ventana + mini-gráfica de 7 días por equipo.
+- [x] **Nombres de IPs externas** en el tráfico (respuestas DNS, SNI, DNS inverso).
 - [x] Escaneo profundo opcional con nmap.
 - [x] Historial local, nombres personalizados, confianza y exportación CSV.
 - [x] Intercepción y bloqueo selectivos con restauración de tablas ARP.
 - [x] Diagnóstico de permisos, dependencias, Npcap, gateway y ARP.
 - [x] Clasificación visual de dispositivos y ficha detallada con historial.
-- [x] Test de velocidad con progreso, cancelación, jitter e historial local.
+- [x] Test de velocidad (en el navegador) con progreso, cancelación, jitter e historial local.
+- [x] Endurecido para uso local: rechaza `Host` ajenos (anti DNS-rebinding) y valida
+      que la IP objetivo de inspección/bloqueo/escaneo pertenece a la red local.
 
 ## Próximas mejoras
 
-- [ ] Resolver nombres de IP externas en el registro de tráfico.
-- [ ] Persistir muestras de tráfico para consultar gráficas históricas.
+- [ ] Detalle de tráfico histórico por *peer* (hoy se agrega por identidad).
+- [ ] Unificar dos sitios (casa + empresa) en una sola vista.
 
 ## Licencia
 
