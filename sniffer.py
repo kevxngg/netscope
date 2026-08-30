@@ -84,6 +84,7 @@ class TrafficMonitor:
         self._local_ips = set()
         self._inspected = set()   # solo estas IPs reciben analisis SNI/HTTP
         self._dhcp = {}           # mac -> huella DHCP (opcion 55 [+ 60])
+        self._dhcp_host = {}      # mac -> hostname anunciado por DHCP (opcion 12)
         self._ext_names = {}      # ip externa -> dominio (de respuestas DNS / SNI)
         self._ptr_tried = set()   # ips a las que ya se les intento DNS inverso
         self._http_ua = {}        # ip local -> mejor User-Agent visto (modelo/SO)
@@ -97,6 +98,10 @@ class TrafficMonitor:
     def dhcp_fp_for(self, mac):
         """Huella DHCP observada para una MAC (vacio si aun no se vio ningun DHCP)."""
         return self._dhcp.get((mac or "").lower(), "")
+
+    def dhcp_host_for(self, mac):
+        """Hostname que el equipo anuncio por DHCP (vacio si no se ha visto)."""
+        return self._dhcp_host.get((mac or "").lower(), "")
 
     def device_ua(self, ip):
         """Mejor User-Agent HTTP visto para una IP local (vacio si ninguno)."""
@@ -244,21 +249,37 @@ class TrafficMonitor:
                     continue
                 # scapy da la opcion como ('clave', valor) o ('clave', v1, v2, ...)
                 opts[o[0]] = list(o[1:]) if len(o) > 2 else o[1]
-            prl = opts.get("param_req_list")
-            if not prl:
-                return
-            if not isinstance(prl, (list, tuple)):
-                prl = [prl]
-            fp = ",".join(str(x) for x in prl)
-            vcls = opts.get("vendor_class_id")
-            if vcls:
-                if isinstance(vcls, bytes):
-                    vcls = vcls.decode(errors="ignore")
-                fp += "|" + str(vcls)
+
             raw = bytes(bootp.chaddr)[:6]
             mac = ":".join("%02x" % b for b in raw)
-            if mac and mac != "00:00:00:00:00:00":
-                self._dhcp[mac.lower()] = fp
+            if not mac or mac == "00:00:00:00:00:00":
+                return
+            mac = mac.lower()
+
+            # Hostname (opcion 12): el NOMBRE que el propio equipo anuncia al pedir
+            # IP. Es la mejor fuente de nombres en una LAN domestica (mDNS/NetBIOS/
+            # DNS-inverso casi nunca resuelven moviles o IoT). Ej: "Redmi-Note-11".
+            host = opts.get("hostname")
+            if host:
+                if isinstance(host, bytes):
+                    host = host.decode(errors="ignore")
+                host = str(host).strip()
+                if host:
+                    self._dhcp_host[mac] = host
+
+            # Huella DHCP (opcion 55 [+ 60]): re-vincula un equipo cuando cambia
+            # solo la MAC. Puede faltar en un ACK del servidor: no pasa nada.
+            prl = opts.get("param_req_list")
+            if prl:
+                if not isinstance(prl, (list, tuple)):
+                    prl = [prl]
+                fp = ",".join(str(x) for x in prl)
+                vcls = opts.get("vendor_class_id")
+                if vcls:
+                    if isinstance(vcls, bytes):
+                        vcls = vcls.decode(errors="ignore")
+                    fp += "|" + str(vcls)
+                self._dhcp[mac] = fp
         except Exception:
             pass
 

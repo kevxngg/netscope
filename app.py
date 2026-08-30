@@ -92,6 +92,12 @@ def _enrich_and_store(devices, own_ips):
             by_identity = {}
             for d in devices:
                 dhcp_fp = monitor.dhcp_fp_for(d["mac"])
+                # Si mDNS/NetBIOS/DNS-inverso no dieron un nombre, usa el que el
+                # equipo anuncio por DHCP (opcion 12): la mejor fuente en una LAN.
+                if not scanner.usable_name(d.get("name", "")):
+                    dhcp_host = monitor.dhcp_host_for(d["mac"])
+                    if scanner.usable_name(dhcp_host):
+                        d["name"] = dhcp_host
                 obs = {"mac": d["mac"], "ip": d["ip"],
                        "hostname": d.get("name", ""),
                        "vendor": d.get("vendor", ""), "dhcp_fp": dhcp_fp}
