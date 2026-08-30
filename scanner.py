@@ -387,11 +387,3 @@ def enrich_all(devices, own_ips=None):
     with ThreadPoolExecutor(max_workers=workers) as ex:
         list(ex.map(lambda d: enrich(d, own_ips=own_ips), devices))
     return devices
-
-
-# --- compatibilidad: escaneo completo en una sola llamada ------------------ #
-def scan_all(timeout: int = 2):
-    own_ips = {ip for _, _, ip in get_local_networks()}
-    devices = arp_only(timeout=timeout)
-    enrich_all(devices, own_ips=own_ips)
-    return devices

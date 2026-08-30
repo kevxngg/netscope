@@ -533,7 +533,8 @@ def api_log_reset():
 
 @app.route("/api/device/<int:identity_id>/name", methods=["POST"])
 def api_device_name(identity_id):
-    if not store.get_identity(identity_id):
+    ident = store.get_identity(identity_id)
+    if not ident or ident.get("site_id") != SITE:
         return jsonify({"ok": False, "error": "identidad no encontrada"}), 404
     name = (request.json or {}).get("name", "").strip()
     store.set_identity_label_manual(identity_id, name)
@@ -542,7 +543,8 @@ def api_device_name(identity_id):
 
 @app.route("/api/device/<int:identity_id>/trust", methods=["POST"])
 def api_device_trust(identity_id):
-    if not store.get_identity(identity_id):
+    ident = store.get_identity(identity_id)
+    if not ident or ident.get("site_id") != SITE:
         return jsonify({"ok": False, "error": "identidad no encontrada"}), 404
     store.set_identity_trusted(identity_id, bool((request.json or {}).get("trusted")))
     return jsonify({"ok": True})

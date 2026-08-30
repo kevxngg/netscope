@@ -5,7 +5,6 @@ Configura el token del bot y el chat_id en la pagina de Ajustes. Se usa para
 avisar cuando aparece un dispositivo desconocido en la red.
 """
 
-import json
 import urllib.parse
 import urllib.request
 

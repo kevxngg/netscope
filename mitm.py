@@ -178,11 +178,6 @@ class Interceptor:
             time.sleep(0.3)
         return _mac_from_arp(ip)
 
-    def detect_gateway(self):
-        from scapy.all import conf
-        # conf.route.route devuelve (iface, ip_salida, gateway)
-        return conf.route.route("0.0.0.0")[2]
-
     def _setup(self):
         from scapy.all import conf, get_if_hwaddr
         # La ruta por defecto nos da LA interfaz con salida a internet: la usamos

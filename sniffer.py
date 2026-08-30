@@ -104,9 +104,6 @@ class TrafficMonitor:
 
     _MAX_EXT_NAMES = 8000
 
-    def name_for_ip(self, ip):
-        return self._ext_names.get(ip, "")
-
     def _note_ext(self, ip, name):
         if ip and name and (ip in self._ext_names
                             or len(self._ext_names) < self._MAX_EXT_NAMES):

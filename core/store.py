@@ -209,11 +209,6 @@ def ensure_site(name, cidr="", notes=""):
         return cur.lastrowid
 
 
-def list_sites():
-    with _lock, _conn() as c:
-        return [dict(r) for r in c.execute("SELECT * FROM sites ORDER BY id")]
-
-
 # --------------------------------------------------------------------------- #
 #  Identidades y senales
 #  (la LOGICA de fusion vive en core/identity.py; aqui solo persistimos)
@@ -442,13 +437,6 @@ def add_traffic_window(site_id, window_start, identity_id, peer_ip, peer_host,
                 " bytes_in,bytes_out,packets) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (site_id, window_start, identity_id, peer_ip, peer_host, proto,
                  port, bytes_in, bytes_out, packets))
-
-
-def traffic_for_identity(identity_id, since=0):
-    with _lock, _conn() as c:
-        return [dict(r) for r in c.execute(
-            "SELECT * FROM traffic_samples WHERE identity_id=? AND window_start>=? "
-            "ORDER BY window_start DESC", (identity_id, since))]
 
 
 def traffic_daily(site_id, identity_id, days=7):
