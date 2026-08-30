@@ -183,6 +183,8 @@ a{color:inherit;text-decoration:none}
 .log .kind{font-size:10px;text-transform:uppercase;letter-spacing:.5px;text-align:center;border-radius:5px;padding:1px 0;height:16px;align-self:center}
 .log .kind.dns{color:var(--green);border:1px solid var(--green-dim)}
 .log .kind.sni{color:var(--amber);border:1px solid var(--amber)}
+.log .kind.quic{color:#6aa0ff;border:1px solid #3f6ad8}
+.log .kind.ua{color:#c58af9;border:1px solid #8b5cf6}
 .log .kind.http{color:var(--red);border:1px solid var(--red)}
 .log .val{color:var(--text);word-break:break-all}
 .log-empty{color:var(--faint);padding:14px 4px;font-size:13px}

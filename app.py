@@ -17,6 +17,7 @@ from flask import Flask, jsonify, render_template, request
 
 import scanner
 import deepscan
+import fingerprint
 import platform_setup
 import wifi
 import notify
@@ -157,20 +158,33 @@ def _identity_for_ip(ip):
     return None
 
 
-def _target_ip_from_payload(payload):
-    """Resuelve la IP objetivo de una accion (inspect/block) desde el body.
+def _target_from_payload(payload):
+    """Resuelve (ip, mac) del objetivo de una accion (inspect/block) desde el body.
 
-    Acepta identity_id (preferido) o ip directa. Devuelve None si el equipo
-    esta ausente o la IP no es local."""
+    Acepta identity_id (preferido) o ip directa. La MAC sale del escaneo (ya la
+    conocemos), asi la intercepcion/bloqueo no depende de re-resolverla al vuelo.
+    Devuelve (None, None) si el equipo esta ausente o la IP no es local."""
     iid = payload.get("identity_id")
+    mac = ""
     if iid is not None:
         d = _online_device_for(int(iid))
         ip = d["ip"] if d else None
+        mac = d.get("mac", "") if d else ""
     else:
         ip = payload.get("ip") or None
+        if ip:
+            for d in _last_scan.get("devices", []):
+                if d.get("ip") == ip:
+                    mac = d.get("mac", "")
+                    break
     if ip and not scanner.is_local_ip(ip):
-        return None
-    return ip
+        return None, None
+    return ip, mac
+
+
+def _target_ip_from_payload(payload):
+    """Compat: solo la IP objetivo (o None)."""
+    return _target_from_payload(payload)[0]
 
 
 def _identity_view(ident, online, traffic_by_ip, last_obs=None):
@@ -203,6 +217,43 @@ def _identity_view(ident, online, traffic_by_ip, last_obs=None):
 
 def _sync_inspected():
     monitor.set_inspected(set(interceptor.list_targets()))
+
+
+def _harvest_facts(identity_id, ip):
+    """Recoge datos descriptivos EN VIVO (User-Agent HTTP, modelo mDNS) para una
+    identidad y los persiste como 'facts'. Barato e idempotente."""
+    if not ip:
+        return
+    try:
+        ua = monitor.device_ua(ip)
+        if ua:
+            store.set_fact(identity_id, "user_agent", ua)
+            info = fingerprint.parse_user_agent(ua)
+            if info.get("model"):
+                store.set_fact(identity_id, "model_ua", info["model"])
+            if info.get("os"):
+                store.set_fact(identity_id, "os_ua", info["os"])
+        model_mdns = scanner.mdns.model_for(ip)
+        if model_mdns:
+            store.set_fact(identity_id, "model_mdns", model_mdns)
+    except Exception:
+        pass
+
+
+def _build_fingerprint(identity_id, view):
+    """Resumen legible del equipo a partir de todas las fuentes (facts + OUI)."""
+    facts = store.facts_of(identity_id)
+    return {
+        "vendor": view.get("vendor", ""),
+        "model": fingerprint.best_model(facts),
+        "os": fingerprint.best_os(facts),
+        "device_type": facts.get("device_type", ""),
+        "manufacturer": facts.get("manufacturer", ""),
+        "friendly_name": facts.get("friendly_name", ""),
+        "model_number": facts.get("model_number", ""),
+        "user_agent": facts.get("user_agent", ""),
+        "facts": facts,
+    }
 
 
 def _network_health():
@@ -382,11 +433,13 @@ def api_device(identity_id):
     online = _online_device_for(identity_id)
     last_obs = store.last_observation(identity_id)
     view = _identity_view(ident, online, traffic_by_ip, last_obs=last_obs)
+    _harvest_facts(identity_id, view.get("ip"))
     signals = store.signals_of(identity_id)
     history = [e for e in store.list_events(SITE, 500)
               if e.get("identity_id") == identity_id]
     return jsonify({"ok": True, "device": view, "signals": signals,
                     "ports": store.ports_of(identity_id), "history": history,
+                    "fingerprint": _build_fingerprint(identity_id, view),
                     "inspecting": bool(view["ip"]) and view["ip"] in interceptor.list_targets()})
 
 @app.route("/api/scan", methods=["POST"])
@@ -431,6 +484,13 @@ def api_deepscan():
     if not scanner.is_local_ip(ip):
         return jsonify({"ok": False, "error": "la IP no pertenece a la red local"}), 400
     result = deepscan.deep_scan(ip)
+    # Sonda UPnP/SSDP: la mejor fuente de modelo real para TVs, routers, IoT...
+    ssdp = {}
+    try:
+        ssdp = fingerprint.probe_ssdp(ip)
+    except Exception:
+        ssdp = {}
+    result["upnp"] = ssdp
     # Vuelca SO y puertos como senales/datos persistentes de la identidad.
     if result.get("ok"):
         iid = _identity_for_ip(ip)
@@ -442,6 +502,17 @@ def api_deepscan():
                     "ip": ip, "os_guess": result.get("os", ""),
                     "port_set": [p.get("port") for p in (result.get("ports") or []) if p.get("port")],
                 })
+                # datos descriptivos (no influyen en la fusion de identidad)
+                if result.get("os"):
+                    store.set_fact(iid, "os_nmap", result["os"])
+                for src_key, fact_key in (("manufacturer", "manufacturer"),
+                                          ("model_name", "model_name"),
+                                          ("model_number", "model_number"),
+                                          ("friendly_name", "friendly_name"),
+                                          ("device_type", "device_type")):
+                    if ssdp.get(src_key):
+                        store.set_fact(iid, fact_key, ssdp[src_key])
+                _harvest_facts(iid, ip)
             except Exception:
                 pass
     return jsonify(result)
@@ -518,11 +589,11 @@ def api_notify_test():
 @app.route("/api/block/start", methods=["POST"])
 def api_block_start():
     payload = request.json or {}
-    ip = _target_ip_from_payload(payload)
+    ip, mac = _target_from_payload(payload)
     if not ip:
         return jsonify({"ok": False, "error": "el equipo esta ausente o la IP no es local"}), 409
     try:
-        ok = blocker.block(ip)
+        ok = blocker.block(ip, mac=mac)
         if ok:
             iid = payload.get("identity_id") or _identity_for_ip(ip)
             if iid:
@@ -583,13 +654,13 @@ def api_export_log():
 
 @app.route("/api/inspect/start", methods=["POST"])
 def api_inspect_start():
-    ip = _target_ip_from_payload(request.json or {})
+    ip, mac = _target_from_payload(request.json or {})
     if not ip:
         return jsonify({"ok": False, "error": "el equipo esta ausente o la IP no es local"}), 409
     try:
         if not interceptor.running():
             interceptor.start()
-        ok = interceptor.add_target(ip)
+        ok = interceptor.add_target(ip, mac=mac)
         _sync_inspected()
         if not ok:
             if not interceptor.list_targets():
@@ -625,7 +696,10 @@ def api_history_traffic():
         iid = int(request.args.get("identity_id", ""))
     except ValueError:
         return jsonify({"ok": False, "error": "identity_id invalido"}), 400
-    days = min(90, max(1, int(request.args.get("days", 7) or 7)))
+    try:
+        days = min(90, max(1, int(request.args.get("days", 7) or 7)))
+    except ValueError:
+        days = 7
     return jsonify({"ok": True, "identity_id": iid,
                     "daily": store.traffic_daily(SITE, iid, days=days)})
 

@@ -58,6 +58,19 @@ def parse_http(payload: bytes):
     return None
 
 
+def parse_http_ua(payload: bytes):
+    """Saca la cabecera User-Agent de una peticion HTTP (revela modelo/SO)."""
+    try:
+        text = payload[:4096].decode("latin-1", errors="ignore")
+        for ln in text.split("\r\n"):
+            if ln.lower().startswith("user-agent:"):
+                ua = ln.split(":", 1)[1].strip()
+                return ua or None
+    except Exception:
+        pass
+    return None
+
+
 class TrafficMonitor:
     MAX_EVENTS = 1000
 
@@ -73,6 +86,7 @@ class TrafficMonitor:
         self._dhcp = {}           # mac -> huella DHCP (opcion 55 [+ 60])
         self._ext_names = {}      # ip externa -> dominio (de respuestas DNS / SNI)
         self._ptr_tried = set()   # ips a las que ya se les intento DNS inverso
+        self._http_ua = {}        # ip local -> mejor User-Agent visto (modelo/SO)
 
     def set_local_ips(self, ips):
         self._local_ips = set(ips)
@@ -83,6 +97,10 @@ class TrafficMonitor:
     def dhcp_fp_for(self, mac):
         """Huella DHCP observada para una MAC (vacio si aun no se vio ningun DHCP)."""
         return self._dhcp.get((mac or "").lower(), "")
+
+    def device_ua(self, ip):
+        """Mejor User-Agent HTTP visto para una IP local (vacio si ninguno)."""
+        return self._http_ua.get(ip, "")
 
     _MAX_EXT_NAMES = 8000
 
@@ -161,9 +179,24 @@ class TrafficMonitor:
                     pass
                 return
 
-            # SNI / HTTP SOLO para IPs interceptadas (evita el analisis masivo)
+            # De aqui en adelante, SOLO para IPs interceptadas (evita el
+            # analisis masivo de todo el trafico de la red).
             if not insp_src:
                 return
+
+            # QUIC / HTTP3 (UDP 443): hoy MUCHO trafico (YouTube, Google, Meta,
+            # WhatsApp...) va por aqui, no por TCP. El contenido va cifrado, pero
+            # registramos A DONDE habla: el dominio si lo conocemos (por DNS/SNI),
+            # o la IP. Solo miramos los paquetes de "cabecera larga" (arranque de
+            # conexion) para no meter una linea por cada paquete de datos.
+            if udp is not None:
+                if udp.dport == 443:
+                    load = bytes(udp.payload)
+                    if load and (load[0] & 0xC0) == 0xC0:
+                        with self._lock:
+                            self._add_event(src, "quic", self._ext_names.get(dst) or dst)
+                return
+
             tcp = pkt.getlayer(TCP)
             if tcp is None:
                 return
@@ -176,11 +209,25 @@ class TrafficMonitor:
                     with self._lock:
                         self._add_event(src, "sni", sni)
                     self._note_ext(dst, sni)
+                else:
+                    # ClientHello partido en varios segmentos o con ECH: no hay
+                    # SNI legible, pero si conocemos el destino lo mostramos igual.
+                    known = self._ext_names.get(dst)
+                    if known:
+                        with self._lock:
+                            self._add_event(src, "sni", known)
             elif tcp.dport == 80:
                 url = parse_http(load)
                 if url:
                     with self._lock:
                         self._add_event(src, "http", url)
+                ua = parse_http_ua(load)
+                if ua:
+                    # nos quedamos con el UA mas largo (suele ser el mas completo)
+                    if len(ua) > len(self._http_ua.get(src, "")):
+                        self._http_ua[src] = ua
+                    with self._lock:
+                        self._add_event(src, "ua", ua)
         except Exception:
             pass
 
@@ -265,6 +312,7 @@ class TrafficMonitor:
         with self._lock:
             self.stats.clear()
             self.log.clear()
+            self._http_ua.clear()
 
     def summary(self):
         with self._lock:

@@ -29,6 +29,11 @@
   </div>
 
   <div class="card">
+    <div class="card-h"><span class="t">Ficha técnica</span><span class="c" id="fpHint">modelo · sistema</span></div>
+    <div style="padding:6px 16px 16px" id="fingerprintBox" class="kv">cargando…</div>
+  </div>
+
+  <div class="card">
     <div class="card-h"><span class="t">Actividad de red</span><span class="c">en vivo</span></div>
     <div class="device-metrics" id="deviceMetrics"><div><span>Total</span><b>-</b></div><div><span>Enviado</span><b>-</b></div><div><span>Recibido</span><b>-</b></div></div>
     <div class="presence" id="presenceBox">cargando presencia...</div>
@@ -43,7 +48,7 @@
   <div class="card">
     <div class="card-h">
       <span class="t">Log de conexiones</span>
-      <span class="log-tools"><select id="logFilter" class="device-select" aria-label="Filtrar log"><option value="all">Todo</option><option value="dns">DNS</option><option value="sni">SNI</option><option value="http">HTTP</option></select><a class="btn sm" id="exportLog" href="#">Exportar CSV</a><button class="btn sm ghost" onclick="clearLog()">Limpiar</button></span>
+      <span class="log-tools"><select id="logFilter" class="device-select" aria-label="Filtrar log"><option value="all">Todo</option><option value="dns">DNS</option><option value="sni">SNI</option><option value="quic">QUIC</option><option value="http">HTTP</option><option value="ua">User-Agent</option></select><a class="btn sm" id="exportLog" href="#">Exportar CSV</a><button class="btn sm ghost" onclick="clearLog()">Limpiar</button></span>
     </div>
     <div style="padding:12px 14px 16px">
       <div class="log" id="log"><div class="log-empty">Activa "Inspeccionar" para capturar a donde habla este equipo.</div></div>
@@ -57,9 +62,13 @@
 </div>
 
 <div class="note">
-  <b>Sobre los enlaces:</b> con HTTPS la ruta (/...) va cifrada; solo se ve el
-  dominio (via DNS y SNI). La URL completa solo aparece en trafico HTTP sin
-  cifrar. DNS = dominio resuelto · SNI = servidor TLS · HTTP = URL completa.
+  <b>Sobre los enlaces:</b> ves <b>a dónde</b> habla el equipo, no el contenido
+  (con HTTPS la ruta va cifrada; lo máximo es el dominio).
+  <b>DNS</b> = dominio que resuelve · <b>SNI</b> = servidor TLS sobre TCP ·
+  <b>QUIC</b> = servidor por HTTP/3 (YouTube, Google, Meta… hoy usan esto) ·
+  <b>HTTP</b> = URL completa, solo en el poco tráfico sin cifrar.
+  Si un equipo cifra su DNS (DoH/DoT) casi no verás líneas DNS: es privacidad del
+  dispositivo, no un fallo.
 </div>
 {% endblock %}
 {% block scripts %}

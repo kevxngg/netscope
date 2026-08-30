@@ -64,8 +64,35 @@ async function loadDetail(){
      <div class="dl">escaneo profundo (nmap)</div><div class="device-note">Detecta sistema operativo, puertos y servicios cuando pulses el botón.</div>
      <div id="deepBox">${renderPorts(d.ports)}</div>`;
   renderMetrics(dv); renderSignals(d.signals||[], dv); renderHistory(d.history||[]);
+  renderFingerprint(d.fingerprint||{}, dv);
   loadHistTraffic();
   updateInspectBtn(); refreshBlock();
+}
+
+function renderFingerprint(fp,d){
+  const box=document.getElementById("fingerprintBox"); if(!box) return;
+  const hint=document.getElementById("fpHint");
+  const rows=[
+    ["Modelo", fp.model],
+    ["Sistema", fp.os],
+    ["Tipo", fp.device_type],
+    ["Fabricante (real)", fp.manufacturer],
+    ["Fabricante (OUI)", fp.vendor||d.vendor],
+    ["Nombre UPnP", fp.friendly_name],
+    ["Nº de modelo", fp.model_number],
+  ].filter(r=>r[1]);
+  if(hint) hint.textContent = fp.model || fp.os || (fp.vendor||d.vendor) || "sin datos";
+  if(!rows.length){
+    box.innerHTML='<div style="color:var(--faint)">Aún sin datos extra. Pulsa <b>Escaneo profundo</b> (SO + UPnP) o <b>Inspecciona</b> el equipo para capturar su User-Agent (modelo exacto).</div>';
+    return;
+  }
+  let h=`<div class="identity-grid">`+rows.map(r=>
+    `<div><span>${NS.esc(r[0])}</span><b>${NS.esc(String(r[1]))}</b></div>`).join("")+`</div>`;
+  if(fp.user_agent){
+    h+=`<div class="dl" style="margin-top:10px">User-Agent capturado</div>`+
+       `<div class="device-note num" style="word-break:break-all">${NS.esc(fp.user_agent)}</div>`;
+  }
+  box.innerHTML=h;
 }
 
 function renderPorts(ports){

@@ -291,6 +291,7 @@ class MDNSResolver:
 
     def __init__(self):
         self.map = {}
+        self.models = {}          # ip -> modelo publicado por mDNS (device-info)
         self._zc = None
         self._browsers = []
 
@@ -313,14 +314,28 @@ class MDNSResolver:
             if not info:
                 return
             pretty = name.split("." + service_type.split(".", 1)[0])[0]
+            # modelo publicado en TXT (Apple usa 'model', otros 'md')
+            model = ""
+            try:
+                props = info.properties or {}
+                raw = props.get(b"model") or props.get(b"md")
+                if raw:
+                    model = raw.decode("utf-8", "ignore") if isinstance(raw, bytes) else str(raw)
+            except Exception:
+                model = ""
             for addr in info.parsed_addresses():
                 if ":" not in addr:
                     self.map.setdefault(addr, pretty)
+                    if model:
+                        self.models.setdefault(addr, model)
         except Exception:
             pass
 
     def name_for(self, ip: str) -> str:
         return self.map.get(ip, "")
+
+    def model_for(self, ip: str) -> str:
+        return self.models.get(ip, "")
 
     def stop(self):
         """Cierra zeroconf en segundo plano (su close() puede bloquear en E/S;

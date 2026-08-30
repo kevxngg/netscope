@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS events(
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+
+-- Datos descriptivos del equipo (modelo, SO, fabricante real, nombre UPnP...).
+-- Van APARTE de las senales de identidad a proposito: son informativos y NO
+-- deben influir en la fusion (dos moviles del mismo modelo no son el mismo).
+CREATE TABLE IF NOT EXISTS identity_facts(
+    identity_id  INTEGER NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    key          TEXT NOT NULL,
+    value        TEXT,
+    ts           REAL,
+    PRIMARY KEY(identity_id, key)
+);
 """
 
 
@@ -502,6 +513,27 @@ def list_events(site_id=None, limit=200):
             rows = c.execute("SELECT * FROM events WHERE site_id=? "
                              "ORDER BY id DESC LIMIT ?", (site_id, limit))
         return [dict(r) for r in rows]
+
+
+def set_fact(identity_id, key, value):
+    """Guarda/actualiza un dato descriptivo del equipo (modelo, SO, etc.)."""
+    value = (value or "").strip()
+    if not value:
+        return
+    with _lock, _conn() as c:
+        c.execute(
+            "INSERT INTO identity_facts(identity_id,key,value,ts) VALUES(?,?,?,?) "
+            "ON CONFLICT(identity_id,key) DO UPDATE SET "
+            "value=excluded.value, ts=excluded.ts",
+            (identity_id, key, value, time.time()))
+
+
+def facts_of(identity_id):
+    """Todos los datos descriptivos de una identidad como dict {key: value}."""
+    with _lock, _conn() as c:
+        return {r["key"]: r["value"] for r in c.execute(
+            "SELECT key,value FROM identity_facts WHERE identity_id=?",
+            (identity_id,))}
 
 
 def get_setting(key, default=""):
