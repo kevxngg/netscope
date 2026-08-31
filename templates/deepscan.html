@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %} - Escaneo profundo{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Escaneo profundo (nmap)</h1>
+    <p>Detecta sistema operativo, puertos, servicios y datos UPnP de un equipo.</p>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="deep-picker">
+    <select id="deepDevice" class="device-select">
+      <option value="">— elige un equipo de la red —</option>
+    </select>
+    <span class="deep-or">o IP</span>
+    <input id="deepIp" class="wifi-input" placeholder="192.168.1.50" aria-label="IP a analizar">
+    <button class="btn primary" id="deepBtn" onclick="runDeep()">Analizar</button>
+  </div>
+  <div class="note" style="margin:0 16px 14px">
+    Requiere <b>nmap</b> instalado y ejecutar como administrador. La detección de
+    SO y servicios puede tardar de <b>30 s a 2 min</b>. Solo sobre equipos de tu
+    propia red.
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-h"><span class="t">Resultado</span><span class="c" id="deepMeta">-</span></div>
+  <div style="padding:14px 16px 18px" id="deepResult">
+    <div class="empty">Elige un equipo (o escribe su IP) y pulsa <b>Analizar</b>.</div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/deepscan.js') }}"></script>
+{% endblock %}

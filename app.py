@@ -330,6 +330,10 @@ def page_system():
 def page_wifiscan():
     return render_template("wifiscan.html", seccion="wifiscan")
 
+@app.route("/deepscan")
+def page_deepscan():
+    return render_template("deepscan.html", seccion="deepscan")
+
 
 # ==== API ================================================================== #
 @app.route("/api/summary")

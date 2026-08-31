@@ -60,9 +60,7 @@ async function loadDetail(){
   const ex=document.getElementById("exportLog"); if(ex) ex.href="/api/export/log.csv?ip="+encodeURIComponent(currentIP);
   const firstSeen=dv.first_seen?new Date(dv.first_seen*1000).toLocaleDateString():"-";
   document.getElementById("detail").innerHTML =
-    `<div class="identity-grid"><div><span>IP actual</span><b class="os num">${dv.ip||"— (ausente)"}</b></div><div><span>MAC</span><b class="mac num">${NS.esc(dv.mac||"-")}</b></div><div><span>Fabricante</span><b>${NS.esc(dv.vendor||"-")}</b></div><div><span>Interfaz</span><b>${NS.esc(dv.iface||"-")}</b></div><div><span>Primera vez</span><b>${firstSeen}</b></div><div><span>Estado</span><b>${dv.online?"conectado":"ausente"}</b></div></div>
-     <div class="dl">escaneo profundo (nmap)</div><div class="device-note">Detecta sistema operativo, puertos y servicios cuando pulses el botón.</div>
-     <div id="deepBox">${renderPorts(d.ports)}</div>`;
+    `<div class="identity-grid"><div><span>IP actual</span><b class="os num">${dv.ip||"— (ausente)"}</b></div><div><span>MAC</span><b class="mac num">${NS.esc(dv.mac||"-")}</b></div><div><span>Fabricante</span><b>${NS.esc(dv.vendor||"-")}</b></div><div><span>Interfaz</span><b>${NS.esc(dv.iface||"-")}</b></div><div><span>Primera vez</span><b>${firstSeen}</b></div><div><span>Estado</span><b>${dv.online?"conectado":"ausente"}</b></div></div>`;
   renderMetrics(dv); renderSignals(d.signals||[], dv); renderHistory(d.history||[]);
   renderFingerprint(d.fingerprint||{}, dv);
   loadHistTraffic();
@@ -83,7 +81,7 @@ function renderFingerprint(fp,d){
   ].filter(r=>r[1]);
   if(hint) hint.textContent = fp.model || fp.os || (fp.vendor||d.vendor) || "sin datos";
   if(!rows.length){
-    box.innerHTML='<div style="color:var(--faint)">Aún sin datos extra. Pulsa <b>Escaneo profundo</b> (SO + UPnP) o <b>Inspecciona</b> el equipo para capturar su User-Agent (modelo exacto).</div>';
+    box.innerHTML='<div style="color:var(--faint)">Aún sin datos extra. Usa <b><a href="/deepscan" style="color:var(--green)">Escaneo profundo</a></b> (SO + UPnP) o <b>Inspecciona</b> el equipo para capturar su User-Agent (modelo exacto).</div>';
     return;
   }
   let h=`<div class="identity-grid">`+rows.map(r=>
@@ -93,11 +91,6 @@ function renderFingerprint(fp,d){
        `<div class="device-note num" style="word-break:break-all">${NS.esc(fp.user_agent)}</div>`;
   }
   box.innerHTML=h;
-}
-
-function renderPorts(ports){
-  if(!ports||!ports.length) return `<div style="color:var(--faint)">pulsa "Escaneo profundo".</div>`;
-  return ports.map(p=>`<div class="port"><span class="p num">${p.port}/${p.proto}</span> <span class="s">${NS.esc(p.service||"")} ${NS.esc(p.product||"")} ${NS.esc(p.version||"")}</span></div>`).join("");
 }
 
 function updateInspectBtn(){
@@ -115,23 +108,6 @@ async function toggleInspect(){
   updateInspectBtn();
 }
 
-async function runDeep(){
-  if(!currentIP){ alert("El equipo está ausente: no se puede escanear ahora."); return; }
-  const b=document.getElementById("scanDeepBtn"); b.disabled=true; b.textContent="Analizando...";
-  const box=document.getElementById("deepBox");
-  box.innerHTML=`<div style="color:var(--amber)">analizando... puede tardar</div>`;
-  try{
-    const r=await NS.post("/api/deepscan",{ip:currentIP});
-    if(!r.ok){ box.innerHTML=`<div style="color:var(--red)">${NS.esc(r.error||"error")}</div>`; }
-    else{
-      let h=`<div class="kv">SO: <span class="os">${NS.esc(r.os||"desconocido")}</span>${r.os_accuracy?` (${r.os_accuracy}%)`:""}</div>`;
-      h+= (r.ports&&r.ports.length)?renderPorts(r.ports):`<div style="color:var(--faint)">sin puertos abiertos detectados.</div>`;
-      box.innerHTML=h;
-      loadDetail();  // recarga señales (os/port_set ya fusionadas)
-    }
-  }catch(e){ box.innerHTML=`<div style="color:var(--red)">fallo la peticion</div>`; }
-  finally{ b.disabled=false; b.textContent="Escaneo profundo"; }
-}
 
 async function pollLog(){
   if(!currentIP) return;

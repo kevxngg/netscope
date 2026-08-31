@@ -295,3 +295,16 @@ a{color:inherit;text-decoration:none}
 .wifi-vn{color:var(--muted)}
 .wtag.mine{color:#04140b;background:var(--green);border-color:var(--green);font-weight:700}
 .wifi-card.mine{border-color:var(--green-dim);box-shadow:0 0 0 1px var(--green-dim) inset}
+/* Escaneo profundo (pagina propia) */
+.deep-picker{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:16px}
+.deep-picker .device-select{min-width:240px}
+.deep-or{color:var(--faint);font-size:12px}
+.deep-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px}
+.deep-grid>div{display:flex;flex-direction:column;gap:1px}
+.deep-grid span{color:var(--faint);font-size:11px}
+.deep-grid b{font-weight:500;color:var(--text);font-size:13px}
+.deep-ports{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.deep-ports .port{font-size:13px}
+.deep-ports .port .p{color:var(--green);font-weight:600;margin-right:8px}
+.deep-ports .port .s{color:var(--muted)}
+@media (max-width:560px){.deep-grid{grid-template-columns:1fr}}

