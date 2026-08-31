@@ -1,34 +1,14 @@
 {% extends "base.html" %}
 {% block title %} - Ajustes{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>Ajustes</h1><p>Sitio administrado y avisos por Telegram.</p></div></div>
-<div class="card" style="max-width:640px;margin-bottom:16px">
+<div class="page-head"><div><h1>Ajustes</h1><p>Sitio que administra esta instalación.</p></div></div>
+<div class="card" style="max-width:640px">
   <div style="padding:18px;display:grid;gap:10px">
     <div class="dl" style="margin-top:0">Sitio que administra esta instalación</div>
     <input id="siteName" placeholder="casa" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 11px;font-family:var(--sans)">
     <div class="note" style="margin-top:2px">Cada instalación administra un sitio (p. ej. <b>casa</b> o <b>empresa</b>). Las identidades no se mezclan entre sitios. Cambiarlo empieza un inventario aparte.</div>
     <button class="btn primary" style="justify-self:start" onclick="saveSite()">Guardar sitio</button>
-  </div>
-</div>
-<div class="card" style="max-width:640px">
-  <div style="padding:18px 18px 20px;display:grid;gap:14px">
-    <label style="display:flex;align-items:center;gap:10px;font-size:14px">
-      <input type="checkbox" id="alerts"> Avisar cuando entre un dispositivo nuevo
-    </label>
-    <div>
-      <div class="dl" style="margin-top:0">Token del bot de Telegram</div>
-      <input id="tgToken" placeholder="123456:ABC-..." style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 11px;font-family:var(--sans)">
-    </div>
-    <div>
-      <div class="dl">Chat ID</div>
-      <input id="tgChat" placeholder="tu chat id" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 11px;font-family:var(--sans)">
-    </div>
-    <div style="display:flex;gap:10px">
-      <button class="btn primary" onclick="save()">Guardar</button>
-      <button class="btn" onclick="test()">Enviar prueba</button>
-      <span id="msg" style="align-self:center;color:var(--muted);font-size:13px"></span>
-    </div>
-    <div class="note" style="margin-top:4px">Crea un bot con <b>@BotFather</b> para el token. Para el chat id, escribe a tu bot y usa <b>@userinfobot</b> o el endpoint getUpdates.</div>
+    <span id="msg" style="color:var(--muted);font-size:13px"></span>
   </div>
 </div>
 {% endblock %}

@@ -268,5 +268,151 @@ def get_public_network_info() -> dict:
     return data
 
 
+# --------------------------------------------------------------------------- #
+#  Escaner de redes Wi-Fi al alcance (wardriving basico)
+#
+#  Muestra TODAS las redes que la tarjeta ve, con BSSID, banda, canal, senal,
+#  seguridad, etc. Limites honestos en Windows (netsh): NO expone WPS, beacon
+#  interval ni TSF (eso necesita modo monitor 802.11, no soportado). El
+#  "last seen" lo llevamos nosotros entre escaneos.
+# --------------------------------------------------------------------------- #
+_ap_seen = {}   # bssid -> {first_seen, last_seen}
+
+
+def _chan_to_freq(channel, band=""):
+    """Frecuencia central aproximada (MHz) a partir del canal (y banda si se sabe)."""
+    m = re.search(r"\d+", str(channel or ""))
+    if not m:
+        return None
+    ch = int(m.group())
+    b = band or ""
+    if "6" in b:
+        return 5950 + ch * 5
+    if "2.4" in b or (not b and 1 <= ch <= 14):
+        return 2484 if ch == 14 else 2407 + ch * 5
+    if "5" in b or (not b and 32 <= ch <= 177):
+        return 5000 + ch * 5
+    return None
+
+
+def _run_raw(cmd, timeout=15):
+    """Como _run pero junta stdout+stderr (netsh escupe avisos por ambos)."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout,
+                           creationflags=_NO_WINDOW)
+    except Exception:
+        return ""
+    raw = (p.stdout or b"") + b"\n" + (p.stderr or b"")
+    for enc in ("utf-8", "cp1252", "cp850", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            continue
+    return raw.decode("latin-1", errors="ignore")
+
+
+def _parse_networks_windows(text):
+    """Parte la salida de 'netsh wlan show networks mode=bssid' en una fila por
+    BSSID. Independiente del idioma (compara por 'esqueleto' ASCII)."""
+    rows = []
+    ssid = auth = enc = ntype = ""
+    cur = None
+    for raw in text.splitlines():
+        if ":" not in raw:
+            continue
+        label, value = raw.split(":", 1)
+        skel = _skeleton(label)
+        value = value.strip()
+        if skel.startswith("bssid "):           # ¡antes que 'ssid'! bssid contiene ssid
+            cur = {"ssid": ssid, "bssid": value.lower(), "security": auth,
+                   "encryption": enc, "net_type": ntype, "signal": "",
+                   "radio": "", "band": "", "channel": ""}
+            rows.append(cur)
+        elif skel.startswith("ssid "):
+            ssid, auth, enc, ntype, cur = value, "", "", "", None
+        elif cur is None:                        # propiedades a nivel de SSID
+            if "autenticacion" in skel or "authentication" in skel:
+                auth = value
+            elif "cifrado" in skel or "encryption" in skel:
+                enc = value
+            elif "tipo de red" in skel or "network type" in skel:
+                ntype = value
+        else:                                    # propiedades a nivel de BSSID
+            if "senal" in skel or "signal" in skel:
+                cur["signal"] = value
+            elif "tipo de radio" in skel or "radio type" in skel:
+                cur["radio"] = value
+            elif skel == "banda" or skel == "band":
+                cur["band"] = value
+            elif "canal" in skel or "channel" in skel:
+                cur["channel"] = value
+    return rows
+
+
+def _finalize_ap(n):
+    """Deriva banda/frecuencia/seguridad y actualiza first/last seen."""
+    band = n.get("band") or _band_from_channel(n.get("channel", ""))
+    n["band"] = band
+    n["freq_mhz"] = _chan_to_freq(n.get("channel", ""), band)
+    sec = _skeleton(n.get("security", ""))
+    n["open"] = (not sec) or any(k in sec for k in ("abierta", "open", "ninguna", "none"))
+    n["wps"] = None                              # netsh no lo expone
+    m = re.search(r"\d+", n.get("signal", "") or "")
+    n["signal_pct"] = int(m.group()) if m else None
+    key = n.get("bssid", "")
+    now = time.time()
+    seen = _ap_seen.get(key)
+    if seen:
+        seen["last_seen"] = now
+    else:
+        _ap_seen[key] = {"first_seen": now, "last_seen": now}
+    n["first_seen"] = _ap_seen[key]["first_seen"]
+    n["last_seen"] = _ap_seen[key]["last_seen"]
+    return n
+
+
+def scan_networks() -> dict:
+    """Escanea las redes Wi-Fi al alcance. Devuelve
+    {ok, networks:[...], count, ts} o {ok:False, error, detail}."""
+    system = platform.system()
+    if system == "Windows":
+        text = _run_raw(["netsh", "wlan", "show", "networks", "mode=bssid"])
+        skel = _skeleton(text)
+        if "ssid" not in skel and ("ubicacion" in skel or "location" in skel):
+            return {"ok": False, "error": "location",
+                    "detail": "Activa los Servicios de ubicación de Windows "
+                              "(Configuración > Privacidad y seguridad > Ubicación) "
+                              "para que Windows permita listar las redes Wi-Fi."}
+        rows = _parse_networks_windows(text)
+        if not rows and "interfaz" not in skel and "interface" not in skel:
+            return {"ok": False, "error": "no_wifi",
+                    "detail": "No se detectó un adaptador Wi-Fi o no hay redes visibles."}
+    elif system == "Linux":
+        text = _run_raw(["nmcli", "-t", "-f",
+                         "SSID,BSSID,CHAN,FREQ,SIGNAL,SECURITY,RATE", "dev", "wifi"])
+        rows = _parse_networks_nmcli(text)
+    else:
+        return {"ok": False, "error": "unsupported",
+                "detail": "El escaneo de redes al alcance solo está disponible "
+                          "en Windows y Linux por ahora."}
+    nets = [_finalize_ap(n) for n in rows]
+    nets.sort(key=lambda x: (x["signal_pct"] is None, -(x["signal_pct"] or 0)))
+    return {"ok": True, "networks": nets, "count": len(nets), "ts": time.time()}
+
+
+def _parse_networks_nmcli(text):
+    rows = []
+    for line in text.splitlines():
+        parts = [p.replace("\\:", ":") for p in re.split(r"(?<!\\):", line)]
+        if len(parts) < 6 or not parts[1]:
+            continue
+        rows.append({"ssid": parts[0], "bssid": parts[1].lower(),
+                     "channel": parts[2], "band": "", "signal": parts[4] + "%",
+                     "security": parts[5], "encryption": "", "net_type": "",
+                     "radio": parts[6] if len(parts) > 6 else ""})
+    return rows
+
+
 if __name__ == "__main__":
     print(json.dumps(get_wifi_info(), indent=2, ensure_ascii=False))
+    print(json.dumps(scan_networks(), indent=2, ensure_ascii=False, default=str))

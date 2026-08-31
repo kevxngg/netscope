@@ -326,6 +326,10 @@ def page_settings():
 def page_system():
     return render_template("system.html", seccion="system")
 
+@app.route("/wifiscan")
+def page_wifiscan():
+    return render_template("wifiscan.html", seccion="wifiscan")
+
 
 # ==== API ================================================================== #
 @app.route("/api/summary")
@@ -395,6 +399,10 @@ def api_system():
 @app.route("/api/wifi")
 def api_wifi():
     return jsonify(wifi.get_wifi_info())
+
+@app.route("/api/wifi/scan")
+def api_wifi_scan():
+    return jsonify(wifi.scan_networks())
 
 @app.route("/api/networks")
 def api_networks():

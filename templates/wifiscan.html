@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %} - Redes WiFi{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Redes WiFi al alcance</h1>
+    <p>Todas las redes que tu tarjeta Wi-Fi detecta a su alrededor.</p>
+  </div>
+  <div class="actions">
+    <button class="btn primary" id="scanWifiBtn" onclick="scanWifi()">Escanear</button>
+    <label class="wifi-auto"><input type="checkbox" id="autoScan"> Auto (10s)</label>
+  </div>
+</div>
+
+<div class="wifi-toolbar">
+  <span class="c" id="wifiCount">-</span>
+  <span class="wifi-tools">
+    <input id="wifiSearch" class="wifi-input" placeholder="Buscar SSID / MAC…" aria-label="Buscar red">
+    <select id="wifiBand" class="device-select" aria-label="Filtrar banda">
+      <option value="all">Todas las bandas</option>
+      <option value="2.4">2.4 GHz</option>
+      <option value="5">5 GHz</option>
+      <option value="6">6 GHz</option>
+    </select>
+    <select id="wifiSort" class="device-select" aria-label="Ordenar">
+      <option value="signal">Señal</option>
+      <option value="ssid">Nombre</option>
+      <option value="channel">Canal</option>
+      <option value="last">Visto</option>
+    </select>
+  </span>
+</div>
+
+<div id="wifiList" class="wifi-list"><div class="empty">Pulsa <b>Escanear</b> para buscar redes.</div></div>
+
+<div class="note" style="margin-top:16px">
+  Ves <b>a dónde</b> emiten los puntos de acceso a tu alrededor (BSSID = MAC del
+  router, banda, canal, potencia y seguridad). <b>Con clave</b> = red cifrada ·
+  <b>Abierta</b> = sin contraseña. En Windows, <b>WPS</b>, <b>beacon interval</b>
+  y <b>TSF</b> no se pueden leer (requieren modo monitor 802.11, no soportado);
+  el resto sí. <b>Nota:</b> escanear redes que no administras es solo para
+  fines legítimos de diagnóstico de TU propio entorno.
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/wifiscan.js') }}"></script>
+{% endblock %}
