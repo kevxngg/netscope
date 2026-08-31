@@ -58,12 +58,14 @@ function render(){
     const sig=n.signal_pct;
     const secBadge=n.open?'<span class="wtag open">abierta</span>':'<span class="wtag sec">con clave</span>';
     const bandBadge=n.band?`<span class="wtag ${bandClass(n.band)}">${NS.esc(n.band)}</span>`:'';
-    return `<div class="wifi-card ${open?'open':''}">
+    const mineBadge=n.is_current?'<span class="wtag mine">tu red</span>':'';
+    const vendor=n.vendor?` · <span class="wifi-vn">${NS.esc(n.vendor)}</span>`:'';
+    return `<div class="wifi-card ${open?'open':''} ${n.is_current?'mine':''}">
       <div class="wifi-row" onclick="toggle('${key}')">
         <span class="wifi-sig" title="${sig==null?'?':sig+'%'}"><i style="height:${Math.max(6,(sig||0)*0.34)}px;background:${sigColor(sig)}"></i></span>
         <span class="wifi-main">
-          <span class="wifi-name">${name}${secBadge}${bandBadge}</span>
-          <span class="wifi-sub"><span class="mac num">${NS.esc(n.bssid)}</span> · canal ${NS.esc(String(n.channel||'?'))}${n.freq_mhz?` · ${n.freq_mhz} MHz`:''}</span>
+          <span class="wifi-name">${name}${mineBadge}${secBadge}${bandBadge}</span>
+          <span class="wifi-sub"><span class="mac num">${NS.esc(n.bssid)}</span>${vendor} · canal ${NS.esc(String(n.channel||'?'))}${n.freq_mhz?` · ${n.freq_mhz} MHz`:''}</span>
         </span>
         <span class="wifi-sigpct num" style="color:${sigColor(sig)}">${sig==null?'—':sig+'%'}</span>
       </div>
@@ -76,6 +78,8 @@ function detail(n){
   const rows=[
     ["SSID (nombre)", n.ssid||"(oculta)"],
     ["BSSID (MAC)", n.bssid],
+    ["Fabricante (router)", n.vendor||"—"],
+    ["¿Tu red?", n.is_current?"Sí, estás conectado aquí":"No"],
     ["Banda", n.band||"—"],
     ["Canal", n.channel||"—"],
     ["Frecuencia", n.freq_mhz?n.freq_mhz+" MHz":"—"],

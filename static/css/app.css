@@ -291,3 +291,7 @@ a{color:inherit;text-decoration:none}
 .wifi-error p{color:var(--muted);font-size:13px;margin:8px 0 0;line-height:1.5}
 .wifi-error .wifi-hint{color:var(--text)}
 @media (max-width:560px){.wifi-detail{grid-template-columns:1fr}}
+/* Redes WiFi: fabricante + tu red */
+.wifi-vn{color:var(--muted)}
+.wtag.mine{color:#04140b;background:var(--green);border-color:var(--green);font-weight:700}
+.wifi-card.mine{border-color:var(--green-dim);box-shadow:0 0 0 1px var(--green-dim) inset}

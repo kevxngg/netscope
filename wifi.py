@@ -400,8 +400,46 @@ def scan_networks() -> dict:
                 "detail": "El escaneo de redes al alcance solo está disponible "
                           "en Windows y Linux por ahora."}
     nets = [_finalize_ap(n) for n in rows]
-    nets.sort(key=lambda x: (x["signal_pct"] is None, -(x["signal_pct"] or 0)))
+    # Fabricante del router por su MAC (OUI), reutilizando la base y cache que ya
+    # mantiene el scanner (no descarga nada extra).
+    try:
+        import scanner
+        for n in nets:
+            v = scanner._get_vendor(n["bssid"])
+            n["vendor"] = "" if (not v or v.lower() == "desconocido") else v
+    except Exception:
+        for n in nets:
+            n.setdefault("vendor", "")
+    # Marca cual es la red a la que ESTAS conectado ahora.
+    current = _connected_bssid()
+    for n in nets:
+        n["is_current"] = bool(current) and n["bssid"] == current
+    nets.sort(key=lambda x: (not x.get("is_current"),
+                             x["signal_pct"] is None, -(x["signal_pct"] or 0)))
     return {"ok": True, "networks": nets, "count": len(nets), "ts": time.time()}
+
+
+def _connected_bssid() -> str:
+    """MAC (BSSID) del punto de acceso al que estamos conectados ahora, o ''."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            text = _run(["netsh", "wlan", "show", "interfaces"])
+            for raw in text.splitlines():
+                if ":" not in raw:
+                    continue
+                label, value = raw.split(":", 1)
+                if _skeleton(label) == "bssid":
+                    return value.strip().lower()
+        elif system == "Linux":
+            text = _run(["nmcli", "-t", "-f", "active,bssid", "dev", "wifi"])
+            for line in text.splitlines():
+                parts = [p.replace("\\:", ":") for p in re.split(r"(?<!\\):", line)]
+                if parts and parts[0] == "yes" and len(parts) > 1:
+                    return parts[1].lower()
+    except Exception:
+        pass
+    return ""
 
 
 def _parse_networks_nmcli(text):
