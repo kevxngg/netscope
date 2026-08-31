@@ -85,6 +85,7 @@ class TrafficMonitor:
         self._inspected = set()   # solo estas IPs reciben analisis SNI/HTTP
         self._dhcp = {}           # mac -> huella DHCP (opcion 55 [+ 60])
         self._dhcp_host = {}      # mac -> hostname anunciado por DHCP (opcion 12)
+        self._ip6_ll_by_mac = {}  # mac -> link-local IPv6 (fe80::) para cortar IPv6
         self._ext_names = {}      # ip externa -> dominio (de respuestas DNS / SNI)
         self._ptr_tried = set()   # ips a las que ya se les intento DNS inverso
         self._http_ua = {}        # ip local -> mejor User-Agent visto (modelo/SO)
@@ -102,6 +103,10 @@ class TrafficMonitor:
     def dhcp_host_for(self, mac):
         """Hostname que el equipo anuncio por DHCP (vacio si no se ha visto)."""
         return self._dhcp_host.get((mac or "").lower(), "")
+
+    def ip6_ll_for(self, mac):
+        """Link-local IPv6 vista para una MAC (vacio si aun no se ha observado)."""
+        return self._ip6_ll_by_mac.get((mac or "").lower(), "")
 
     def device_ua(self, ip):
         """Mejor User-Agent HTTP visto para una IP local (vacio si ninguno)."""
@@ -136,6 +141,17 @@ class TrafficMonitor:
         except Exception:
             return
         try:
+            # IPv6: aprende la link-local (fe80::) de cada equipo por su MAC.
+            # Hace falta para poder CORTAR el IPv6 (bloqueo por NDP). Los equipos
+            # anuncian su link-local por NDP multicast, asi que lo vemos sin MITM.
+            try:
+                from scapy.layers.inet6 import IPv6
+                ip6 = pkt.getlayer(IPv6)
+                if ip6 is not None and (ip6.src or "").startswith("fe80"):
+                    self._ip6_ll_by_mac[(pkt.src or "").lower()] = ip6.src
+            except Exception:
+                pass
+
             ip_layer = pkt.getlayer(IP)
             if ip_layer is None:
                 return
