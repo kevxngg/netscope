@@ -380,9 +380,13 @@ def scan_networks() -> dict:
         skel = _skeleton(text)
         if "ssid" not in skel and ("ubicacion" in skel or "location" in skel):
             return {"ok": False, "error": "location",
-                    "detail": "Activa los Servicios de ubicación de Windows "
-                              "(Configuración > Privacidad y seguridad > Ubicación) "
-                              "para que Windows permita listar las redes Wi-Fi."}
+                    "detail": "Windows exige los Servicios de ubicación ACTIVADOS "
+                              "para listar redes Wi-Fi (además de admin, que NetScope "
+                              "ya tiene). Actívalos en Configuración > Privacidad y "
+                              "seguridad > Ubicación. Si ahí ves 'Algunas opciones las "
+                              "administra tu organización', tu empresa los bloquea por "
+                              "política y no se puede escanear en este equipo: no es un "
+                              "fallo de NetScope, es un control de Windows/IT."}
         rows = _parse_networks_windows(text)
         if not rows and "interfaz" not in skel and "interface" not in skel:
             return {"ok": False, "error": "no_wifi",

@@ -30,9 +30,9 @@ function renderError(d){
   document.getElementById("wifiCount").textContent="0 redes";
   const loc = d.error==="location";
   box.innerHTML=`<div class="wifi-error">
-    <b>${loc?"Falta el permiso de ubicación de Windows":"No se pudo escanear"}</b>
+    <b>${loc?"Windows bloquea el escaneo (falta ubicación)":"No se pudo escanear"}</b>
     <p>${NS.esc(d.detail||"Error desconocido.")}</p>
-    ${loc?'<p class="wifi-hint">Ve a <b>Configuración → Privacidad y seguridad → Ubicación</b>, actívala, y vuelve a pulsar Escanear. Windows exige la ubicación activa para revelar las redes Wi-Fi cercanas.</p>':''}
+    ${loc?'<p class="wifi-hint">Abre <b>Configuración → Privacidad y seguridad → Ubicación</b> y actívala; luego pulsa <b>Escanear</b> otra vez. Si esa opción aparece <b>administrada por tu organización</b>, tu empresa la tiene bloqueada por política y el escaneo no es posible en este equipo (usa un equipo personal donde controles la ubicación).</p>':''}
   </div>`;
 }
 
