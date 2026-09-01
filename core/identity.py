@@ -122,7 +122,13 @@ def signals_from_observation(obs: dict):
     if port_set:
         # normaliza a "22,80,443" ordenado para que sea comparable
         if isinstance(port_set, (list, tuple, set)):
-            port_set = ",".join(str(p) for p in sorted(int(x) for x in port_set))
+            try:
+                ports = sorted({int(x) for x in port_set if 0 < int(x) <= 65535})
+            except (TypeError, ValueError):
+                ports = []
+            port_set = ",".join(str(p) for p in ports)
+        if not str(port_set).strip():
+            return out
         out.append(("port_set", str(port_set), WEIGHTS["port_set"]))
 
     return out
