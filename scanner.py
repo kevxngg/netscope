@@ -44,16 +44,20 @@ def usable_name(name: str) -> bool:
     return value not in _GENERIC_NAMES and "intel_ce_linux" not in value
 
 
-def seed_caches():
+def seed_caches(site_id=None, clear=False):
     """Precarga fabricantes/nombres ya conocidos desde la BD (arranque instantaneo)."""
     try:
         from core import store
-        data = store.seed_data()
-        for mac, vendor in data["vendors"].items():
-            _vendor_cache.setdefault(mac, vendor)
-        for mac, name in data["names"].items():
-            if usable_name(name):
-                _name_cache.setdefault(mac, name)
+        data = store.seed_data(site_id)
+        with _cache_lock:
+            if clear:
+                _vendor_cache.clear()
+                _name_cache.clear()
+            for mac, vendor in data["vendors"].items():
+                _vendor_cache.setdefault(mac, vendor)
+            for mac, name in data["names"].items():
+                if usable_name(name):
+                    _name_cache.setdefault(mac, name)
     except Exception:
         pass
 
@@ -181,7 +185,7 @@ def is_local_ip(ip: str) -> bool:
     """
     try:
         addr = ipaddress.ip_address(ip)
-    except ValueError:
+    except (TypeError, ValueError):
         return False
     for _, cidr, _ in get_local_networks():
         try:
