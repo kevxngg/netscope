@@ -21,6 +21,8 @@ import subprocess
 import platform
 import ipaddress
 import threading
+import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import psutil
@@ -32,6 +34,8 @@ _NO_WINDOW = 0x08000000 if _IS_WIN else 0
 _vendor_cache = {}
 _name_cache = {}
 _cache_lock = threading.Lock()
+_metadata_cache = {}  # mac -> (ts, facts); evita repetir UPnP en cada autoescaneo
+_metadata_lock = threading.Lock()
 
 _mac_lookup = None
 _mac_lock = threading.Lock()
@@ -103,6 +107,32 @@ def _get_vendor(mac: str) -> str:
     with _cache_lock:
         _vendor_cache[key] = vendor
     return vendor
+
+
+def _device_metadata(ip: str, mac: str) -> dict:
+    now = time.time()
+    key = (mac or "").lower()
+    with _metadata_lock:
+        cached = _metadata_cache.get(key)
+        if cached:
+            ttl = 6 * 3600 if cached[1] else 30 * 60
+            if now - cached[0] < ttl:
+                return dict(cached[1])
+    facts = {}
+    try:
+        import fingerprint
+        facts.update(fingerprint.probe_ssdp(ip, timeout=0.7))
+    except Exception:
+        pass
+    model = mdns.model_for(ip) if "mdns" in globals() else ""
+    if model:
+        facts.setdefault("model_mdns", model)
+    with _metadata_lock:
+        if len(_metadata_cache) > 4096:
+            oldest = min(_metadata_cache, key=lambda item: _metadata_cache[item][0])
+            _metadata_cache.pop(oldest, None)
+        _metadata_cache[key] = (now, dict(facts))
+    return facts
 
 
 # --- topologia local -------------------------------------------------------- #
@@ -219,6 +249,85 @@ def arp_scan(network: str, timeout: int = 2, iface: str = None):
     return [{"ip": ip, "mac": mac} for mac, ip in seen.items()]
 
 
+_MAC_PATTERN = re.compile(r"(?i)(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}")
+
+
+def _normalise_mac(value: str) -> str:
+    match = _MAC_PATTERN.search(value or "")
+    if not match:
+        return ""
+    mac = match.group(0).replace("-", ":").lower()
+    try:
+        first = int(mac.split(":", 1)[0], 16)
+    except ValueError:
+        return ""
+    if first & 1 or mac in {"00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"}:
+        return ""
+    return mac
+
+
+def _parse_neighbor_output(text: str):
+    """Extrae pares IPv4/MAC de arp/ip-neigh en Windows, Linux o macOS."""
+    rows = []
+    for line in (text or "").splitlines():
+        mac = _normalise_mac(line)
+        if not mac:
+            continue
+        ip_match = re.search(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", line)
+        if not ip_match:
+            continue
+        try:
+            ip = str(ipaddress.IPv4Address(ip_match.group(0)))
+        except ipaddress.AddressValueError:
+            continue
+        rows.append({"ip": ip, "mac": mac, "discovery": "neighbor"})
+    return rows
+
+
+def _neighbor_cache():
+    try:
+        if _IS_WIN:
+            command = ["arp", "-a"]
+        elif platform.system() == "Linux":
+            command = ["ip", "neigh", "show"]
+        else:
+            command = ["arp", "-an"]
+        output = subprocess.run(command, capture_output=True, text=True, timeout=4,
+                                creationflags=_NO_WINDOW).stdout
+    except Exception:
+        return []
+    return _parse_neighbor_output(output)
+
+
+def _network_for_ip(ip, networks):
+    try:
+        addr = ipaddress.IPv4Address(ip)
+    except ipaddress.AddressValueError:
+        return None
+    for iface, cidr, own_ip in networks:
+        try:
+            if addr in ipaddress.IPv4Network(cidr, strict=False):
+                return iface, own_ip
+        except ValueError:
+            continue
+    return None
+
+
+def _own_devices(networks):
+    """Incluye esta PC: una maquina no suele responder a su propio ARP broadcast."""
+    mac_by_iface = {}
+    for iface, addresses in psutil.net_if_addrs().items():
+        for address in addresses:
+            if address.family == psutil.AF_LINK:
+                mac = _normalise_mac(address.address)
+                if mac:
+                    mac_by_iface[iface] = mac
+                    break
+    return [{"ip": own_ip, "mac": mac_by_iface[iface], "iface": iface,
+             "is_self": True, "discovery": "self"}
+            for iface, _, own_ip in networks if iface in mac_by_iface]
+
+
 def arp_only(timeout: int = 2, networks=None):
     """
     FASE 1: descubre IP+MAC de todas las redes locales (rapido) y pega el
@@ -229,7 +338,26 @@ def arp_only(timeout: int = 2, networks=None):
     for iface, cidr, own_ip in networks:
         for dev in arp_scan(cidr, timeout=timeout, iface=iface):
             dev["iface"] = iface
+            dev["discovery"] = "arp"
+            found[dev["mac"].lower()] = dev
+    # La tabla de vecinos conserva equipos vistos hace poco y sirve como
+    # complemento si una respuesta ARP se perdio durante la rafaga del escaneo.
+    used_ips = {dev["ip"] for dev in found.values()}
+    for dev in _neighbor_cache():
+        network = _network_for_ip(dev["ip"], networks)
+        # Una entrada vieja puede conservar la MAC anterior de una IP. El ARP
+        # activo es mas reciente y evita mostrar dos equipos con la misma IP.
+        if not network or dev["ip"] in used_ips:
+            continue
+        dev["iface"] = network[0]
+        if dev["mac"] not in found:
             found[dev["mac"]] = dev
+            used_ips.add(dev["ip"])
+    for dev in _own_devices(networks):
+        for stale_mac, stale in list(found.items()):
+            if stale.get("ip") == dev["ip"] and stale_mac != dev["mac"]:
+                found.pop(stale_mac, None)
+        found[dev["mac"]] = dev
     own_ips = {ip for _, _, ip in networks}
 
     devices = []
@@ -373,6 +501,7 @@ def enrich(device: dict, own_ips=None) -> dict:
     # fabricante: cache o lookup
     device["vendor"] = device.get("vendor") or _get_vendor(mac)
     device["is_self"] = ip in own_ips
+    device["facts"] = _device_metadata(ip, mac)
 
     with _cache_lock:
         if usable_name(name):
