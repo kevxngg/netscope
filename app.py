@@ -11,6 +11,7 @@ import threading
 import time
 import platform
 import subprocess
+from functools import wraps
 from urllib.request import urlopen
 
 from flask import Flask, jsonify, render_template, request
@@ -55,6 +56,8 @@ _last_scan = {"devices": [], "gateway": "", "ts": 0, "enriching": False,
               "error": "", "by_identity": {}, "known_ids": set()}
 _scan_lock = threading.Lock()
 _enrich_lock = threading.Lock()
+_scan_generation = 0
+_summary_lock = threading.Lock()
 _summary_cache = {"data": None, "ts": 0.0}
 _SUMMARY_TTL = 3.0
 _health_cache = {"data": None, "ts": 0.0}
@@ -63,8 +66,19 @@ _traffic_state = {"ts": 0.0, "sent": 0, "recv": 0, "peak": 0.0}
 _AUTO_SCAN_SECS = 15   # re-escaneo automatico en segundo plano
 
 
+def _serialized(lock):
+    def decorate(func):
+        @wraps(func)
+        def wrapped(*args, **kwargs):
+            with lock:
+                return func(*args, **kwargs)
+        return wrapped
+    return decorate
+
+
 def _do_scan_fast():
     """FASE 1: ARP rapido. Publica los equipos al instante (con datos de cache)."""
+    global _scan_generation
     with _scan_lock:
         networks = scanner.get_local_networks()
         if not networks:
@@ -76,11 +90,13 @@ def _do_scan_fast():
         _last_scan["gateway"] = gateway
         _last_scan["ts"] = time.time()
         _last_scan["error"] = ""
-        monitor.set_local_ips(list(own_ips))
-    return devices, own_ips
+        _scan_generation += 1
+        generation = _scan_generation
+        monitor.set_local_context(own_ips, [cidr for _, cidr, _ in networks])
+    return devices, own_ips, generation, SITE
 
 
-def _enrich_and_store(devices, own_ips):
+def _enrich_and_store(devices, own_ips, generation, site_id):
     """FASE 2: resuelve nombres/fabricantes, funde cada equipo en su IDENTIDAD
     (ver core/identity.py) y guarda la observacion. Muta los dicts ya publicados."""
     with _enrich_lock:
@@ -101,12 +117,12 @@ def _enrich_and_store(devices, own_ips):
                 obs = {"mac": d["mac"], "ip": d["ip"],
                        "hostname": d.get("name", ""),
                        "vendor": d.get("vendor", ""), "dhcp_fp": dhcp_fp}
-                iid = identity.resolve(SITE, obs)
+                iid = identity.resolve(site_id, obs)
                 d["identity_id"] = iid
                 vendor = d.get("vendor", "")
                 if vendor and vendor.lower() != "desconocido":
                     store.set_identity_vendor(iid, vendor)
-                store.record_observation(SITE, "arp", identity_id=iid, mac=d["mac"],
+                store.record_observation(site_id, "arp", identity_id=iid, mac=d["mac"],
                                          ip=d["ip"], hostname=d.get("name", ""),
                                          vendor=d.get("vendor", ""), dhcp_fp=dhcp_fp)
                 by_identity[iid] = d
@@ -114,25 +130,31 @@ def _enrich_and_store(devices, own_ips):
                 if iid not in prev_known and not first_run:
                     label = (ident.get("label_manual") or ident.get("label")
                              or d.get("vendor") or "equipo")
-                    store.record_event(SITE, iid, "nuevo",
+                    store.record_event(site_id, iid, "nuevo",
                                        detail=f"{label} · {d['ip']}", severity="warn")
                     try:
                         notify.notify_new_device(label, d["ip"], d.get("vendor", ""))
                     except Exception:
                         pass
-            _last_scan["by_identity"] = by_identity
-            _last_scan["known_ids"] = {i["id"] for i in store.all_identities(SITE)}
-            _last_scan["ts"] = time.time()
+            # Un escaneo mas nuevo puede haberse publicado mientras se resolvian
+            # nombres. No mezclar su lista con identidades de una generacion vieja.
+            if generation == _scan_generation and site_id == SITE:
+                _last_scan["by_identity"] = by_identity
+                _last_scan["known_ids"] = {
+                    i["id"] for i in store.all_identities(site_id)
+                }
+                _last_scan["ts"] = time.time()
         except Exception as e:
-            _last_scan["error"] = str(e)
+            if generation == _scan_generation and site_id == SITE:
+                _last_scan["error"] = str(e)
         finally:
             _last_scan["enriching"] = False
 
 
 def _do_scan():
     """Escaneo completo (sincrono). Se usa al arrancar y en el bucle automatico."""
-    devices, own_ips = _do_scan_fast()
-    _enrich_and_store(devices, own_ips)
+    devices, own_ips, generation, site_id = _do_scan_fast()
+    _enrich_and_store(devices, own_ips, generation, site_id)
     return devices
 
 
@@ -170,11 +192,17 @@ def _target_from_payload(payload):
     Acepta identity_id (preferido) o ip directa. La MAC sale del escaneo (ya la
     conocemos), asi la intercepcion/bloqueo no depende de re-resolverla al vuelo.
     Devuelve (None, None) si el equipo esta ausente o la IP no es local."""
+    if not isinstance(payload, dict):
+        return None, None
     iid = payload.get("identity_id")
     mac = ""
     if iid is not None:
-        d = _online_device_for(int(iid))
-        ip = d["ip"] if d else None
+        try:
+            iid = int(iid)
+        except (TypeError, ValueError):
+            return None, None
+        d = _online_device_for(iid)
+        ip = d["ip"] if d else (payload.get("ip") or None)
         mac = d.get("mac", "") if d else ""
     else:
         ip = payload.get("ip") or None
@@ -183,6 +211,9 @@ def _target_from_payload(payload):
                 if d.get("ip") == ip:
                     mac = d.get("mac", "")
                     break
+    if ip is not None and not isinstance(ip, str):
+        return None, None
+    ip = ip.strip() if ip else None
     if ip and not scanner.is_local_ip(ip):
         return None, None
     return ip, mac
@@ -191,6 +222,27 @@ def _target_from_payload(payload):
 def _target_ip_from_payload(payload):
     """Compat: solo la IP objetivo (o None)."""
     return _target_from_payload(payload)[0]
+
+
+def _json_payload():
+    """Devuelve un objeto JSON o {} sin provocar el 415 automatico de Flask."""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _as_bool(value):
+    return value is True or (isinstance(value, str)
+                             and value.strip().lower() in {"1", "true", "yes", "on"})
+
+
+def _clean_text(value, limit=512):
+    return value.strip()[:limit] if isinstance(value, str) else ""
+
+
+def _csv_safe(value):
+    """Neutraliza formulas al abrir exportaciones en Excel/LibreOffice."""
+    text = "" if value is None else str(value)
+    return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) else text
 
 
 def _identity_view(ident, online, traffic_by_ip, last_obs=None):
@@ -337,6 +389,7 @@ def page_deepscan():
 
 # ==== API ================================================================== #
 @app.route("/api/summary")
+@_serialized(_summary_lock)
 def api_summary():
     now = time.time()
     if _summary_cache["data"] and now - _summary_cache["ts"] < _SUMMARY_TTL:
@@ -463,9 +516,10 @@ def api_device(identity_id):
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
     try:
-        devices, own_ips = _do_scan_fast()
+        devices, own_ips, generation, site_id = _do_scan_fast()
         # nombres/identidades se resuelven en segundo plano (la vista se rellena sola)
-        threading.Thread(target=_enrich_and_store, args=(devices, own_ips),
+        threading.Thread(target=_enrich_and_store,
+                         args=(devices, own_ips, generation, site_id),
                          daemon=True).start()
         return jsonify({"ok": True, "count": len(devices), "devices": devices,
                         "gateway": _last_scan["gateway"], "enriching": True})
@@ -496,7 +550,7 @@ def api_traffic_reset():
 
 @app.route("/api/deepscan", methods=["POST"])
 def api_deepscan():
-    ip = (request.json or {}).get("ip", "")
+    ip = _clean_text(_json_payload().get("ip", ""), 64)
     if not ip:
         return jsonify({"ok": False, "error": "falta ip"}), 400
     if not scanner.is_local_ip(ip):
@@ -538,14 +592,17 @@ def api_deepscan():
 @app.route("/api/log")
 def api_log():
     ip = request.args.get("ip", "")
-    since = int(request.args.get("since", 0) or 0)
+    try:
+        since = max(0, int(request.args.get("since", 0) or 0))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "since invalido"}), 400
     events = monitor.log_since(ip, since)
     latest = events[-1]["seq"] if events else since
     return jsonify({"ip": ip, "events": events, "latest": latest})
 
 @app.route("/api/log/reset", methods=["POST"])
 def api_log_reset():
-    ip = (request.json or {}).get("ip", "")
+    ip = _clean_text(_json_payload().get("ip", ""), 64)
     monitor.reset_log(ip)
     return jsonify({"ok": True})
 
@@ -554,7 +611,7 @@ def api_device_name(identity_id):
     ident = store.get_identity(identity_id)
     if not ident or ident.get("site_id") != SITE:
         return jsonify({"ok": False, "error": "identidad no encontrada"}), 404
-    name = (request.json or {}).get("name", "").strip()
+    name = _clean_text(_json_payload().get("name", ""), 120)
     store.set_identity_label_manual(identity_id, name)
     return jsonify({"ok": True})
 
@@ -564,7 +621,7 @@ def api_device_trust(identity_id):
     ident = store.get_identity(identity_id)
     if not ident or ident.get("site_id") != SITE:
         return jsonify({"ok": False, "error": "identidad no encontrada"}), 404
-    store.set_identity_trusted(identity_id, bool((request.json or {}).get("trusted")))
+    store.set_identity_trusted(identity_id, _as_bool(_json_payload().get("trusted")))
     return jsonify({"ok": True})
 
 
@@ -582,16 +639,20 @@ def api_events():
 def api_settings():
     global SITE
     if request.method == "POST":
-        data = request.json or {}
+        data = _json_payload()
         for k in ("tg_token", "tg_chat"):
             if k in data:
-                store.set_setting(k, data[k])
+                store.set_setting(k, _clean_text(data[k]))
         if "alerts_enabled" in data:
-            store.set_setting("alerts_enabled", "1" if data["alerts_enabled"] else "0")
-        if data.get("site_name"):
-            store.set_setting("site_name", data["site_name"])
-            SITE = store.ensure_site(data["site_name"])
-            _last_scan["known_ids"] = set()
+            store.set_setting("alerts_enabled", "1" if _as_bool(data["alerts_enabled"]) else "0")
+        site_name = _clean_text(data.get("site_name", ""), 120)
+        if site_name:
+            store.set_setting("site_name", site_name)
+            SITE = store.ensure_site(site_name)
+            scanner.seed_caches(SITE, clear=True)
+            _last_scan.update({"devices": [], "by_identity": {},
+                               "known_ids": set(), "gateway": "", "ts": 0})
+            _summary_cache.update({"data": None, "ts": 0.0})
         return jsonify({"ok": True})
     return jsonify({
         "tg_token": store.get_setting("tg_token"),
@@ -608,7 +669,7 @@ def api_notify_test():
 
 @app.route("/api/block/start", methods=["POST"])
 def api_block_start():
-    payload = request.json or {}
+    payload = _json_payload()
     ip, mac = _target_from_payload(payload)
     if not ip:
         return jsonify({"ok": False, "error": "el equipo esta ausente o la IP no es local"}), 409
@@ -627,8 +688,10 @@ def api_block_start():
 
 @app.route("/api/block/stop", methods=["POST"])
 def api_block_stop():
-    payload = request.json or {}
-    ip = _target_ip_from_payload(payload) or payload.get("ip", "")
+    payload = _json_payload()
+    ip = _target_ip_from_payload(payload)
+    if not ip:
+        return jsonify({"ok": False, "error": "la IP no es local o es invalida"}), 400
     try:
         blocker.unblock(ip)
         return jsonify({"ok": True, "blocked": blocker.list_targets()})
@@ -649,8 +712,9 @@ def api_export_devices():
     w.writerow(["identity_id", "label", "label_manual", "vendor", "confianza",
                 "confiable", "primera_vez", "ultima_vez", "num_senales"])
     for i in store.all_identities(SITE):
-        w.writerow([i["id"], i.get("label", ""), i.get("label_manual", ""),
-                    i.get("vendor", ""), round(i.get("confidence") or 0.0, 2),
+        w.writerow([i["id"], _csv_safe(i.get("label", "")),
+                    _csv_safe(i.get("label_manual", "")), _csv_safe(i.get("vendor", "")),
+                    round(i.get("confidence") or 0.0, 2),
                     i.get("trusted", 0), i.get("first_seen"), i.get("last_seen"),
                     len(store.signals_of(i["id"]))])
     from flask import Response
@@ -662,11 +726,13 @@ def api_export_devices():
 def api_export_log():
     import csv, io
     ip = request.args.get("ip", "")
+    if ip and not scanner.is_local_ip(ip):
+        return jsonify({"ok": False, "error": "la IP no pertenece a la red local"}), 400
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["seq", "hora", "tipo", "valor"])
     for e in monitor.log_since(ip, 0, limit=100000):
-        w.writerow([e["seq"], e["ts"], e["kind"], e["value"]])
+        w.writerow([e["seq"], e["ts"], _csv_safe(e["kind"]), _csv_safe(e["value"])])
     from flask import Response
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename=netscope-log-{ip}.csv"})
@@ -674,7 +740,7 @@ def api_export_log():
 
 @app.route("/api/inspect/start", methods=["POST"])
 def api_inspect_start():
-    ip, mac = _target_from_payload(request.json or {})
+    ip, mac = _target_from_payload(_json_payload())
     if not ip:
         return jsonify({"ok": False, "error": "el equipo esta ausente o la IP no es local"}), 409
     try:
@@ -693,8 +759,10 @@ def api_inspect_start():
 
 @app.route("/api/inspect/stop", methods=["POST"])
 def api_inspect_stop():
-    payload = request.json or {}
-    ip = _target_ip_from_payload(payload) or payload.get("ip", "")
+    payload = _json_payload()
+    ip = _target_ip_from_payload(payload)
+    if not ip:
+        return jsonify({"ok": False, "error": "la IP no es local o es invalida"}), 400
     try:
         interceptor.remove_target(ip)
         if not interceptor.list_targets():
@@ -714,8 +782,11 @@ def api_inspect_status():
 def api_history_traffic():
     try:
         iid = int(request.args.get("identity_id", ""))
-    except ValueError:
+    except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "identity_id invalido"}), 400
+    ident = store.get_identity(iid)
+    if not ident or ident.get("site_id") != SITE:
+        return jsonify({"ok": False, "error": "identidad no encontrada"}), 404
     try:
         days = min(90, max(1, int(request.args.get("days", 7) or 7)))
     except ValueError:
@@ -802,7 +873,7 @@ def _startup():
     store.init()
     SITE = store.ensure_site(store.get_setting("site_name", "casa"))
     # Cache instantanea desde la BD (fabricantes/nombres ya conocidos)
-    scanner.seed_caches()
+    scanner.seed_caches(SITE, clear=True)
     # Descarga la base de fabricantes UNA vez, sin bloquear escaneos
     threading.Thread(target=scanner.prewarm_vendors, daemon=True).start()
     scanner.mdns.start()
@@ -827,11 +898,12 @@ def _shutdown(*_):
 def _serve():
     try:
         from waitress import serve
-        print("  (servidor: waitress)")
-        serve(app, host="127.0.0.1", port=5000, threads=8, _quiet=True)
-    except Exception:
+    except ImportError:
         print("  (servidor: Flask dev - instala waitress para mas velocidad)")
         app.run(host="127.0.0.1", port=5000, threaded=True, debug=False)
+        return
+    print("  (servidor: waitress)")
+    serve(app, host="127.0.0.1", port=5000, threads=8, _quiet=True)
 
 
 if __name__ == "__main__":
