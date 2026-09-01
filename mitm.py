@@ -125,6 +125,8 @@ def _send_na(iface, dst_ip6, dst_mac, target_ip6, lladdr, src_ip6):
 # Estado del servicio RemoteAccess de Windows ANTES de que lo toquemos, para
 # poder dejarlo como estaba al terminar (start type + si estaba corriendo).
 _win_remoteaccess_prev = {"start": None, "running": None}
+_forwarding_prev = {"linux": None, "darwin": None,
+                    "windows_known": False, "windows": None}
 
 
 def _win_query_remoteaccess():
@@ -150,15 +152,38 @@ def enable_ip_forwarding():
     system = platform.system()
     try:
         if system == "Linux":
+            if _forwarding_prev["linux"] is None:
+                with open("/proc/sys/net/ipv4/ip_forward") as f:
+                    _forwarding_prev["linux"] = f.read().strip()
             with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
                 f.write("1")
         elif system == "Darwin":  # macOS
+            if _forwarding_prev["darwin"] is None:
+                prev = subprocess.run(
+                    ["sysctl", "-n", "net.inet.ip.forwarding"],
+                    capture_output=True, text=True, timeout=5)
+                if prev.returncode == 0:
+                    _forwarding_prev["darwin"] = prev.stdout.strip()
             subprocess.run(["sysctl", "-w", "net.inet.ip.forwarding=1"],
                            capture_output=True, timeout=5)
         elif system == "Windows":
             # Requiere admin. Puede necesitar reinicio la primera vez.
             if _win_remoteaccess_prev["start"] is None:
                 _win_remoteaccess_prev.update(_win_query_remoteaccess())
+            if not _forwarding_prev["windows_known"]:
+                try:
+                    import winreg
+                    with winreg.OpenKey(
+                            winreg.HKEY_LOCAL_MACHINE,
+                            r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters") as key:
+                        try:
+                            value, _ = winreg.QueryValueEx(key, "IPEnableRouter")
+                        except FileNotFoundError:
+                            value = None
+                    _forwarding_prev.update({"windows_known": True,
+                                             "windows": value})
+                except Exception:
+                    pass
             subprocess.run(
                 ["reg", "add",
                  r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
@@ -176,17 +201,34 @@ def disable_ip_forwarding():
     system = platform.system()
     try:
         if system == "Linux":
-            with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
-                f.write("0")
+            previous = _forwarding_prev["linux"]
+            if previous is not None:
+                with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
+                    f.write(previous)
+                _forwarding_prev["linux"] = None
         elif system == "Darwin":
-            subprocess.run(["sysctl", "-w", "net.inet.ip.forwarding=0"],
-                           capture_output=True, timeout=5)
+            previous = _forwarding_prev["darwin"]
+            if previous is not None:
+                subprocess.run(
+                    ["sysctl", "-w", f"net.inet.ip.forwarding={previous}"],
+                    capture_output=True, timeout=5)
+                _forwarding_prev["darwin"] = None
         elif system == "Windows":
-            subprocess.run(
-                ["reg", "add",
-                 r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
-                 "/v", "IPEnableRouter", "/t", "REG_DWORD", "/d", "0", "/f"],
-                capture_output=True, timeout=5)
+            if _forwarding_prev["windows_known"]:
+                previous = _forwarding_prev["windows"]
+                if previous is None:
+                    subprocess.run(
+                        ["reg", "delete",
+                         r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
+                         "/v", "IPEnableRouter", "/f"],
+                        capture_output=True, timeout=5)
+                else:
+                    subprocess.run(
+                        ["reg", "add",
+                         r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
+                         "/v", "IPEnableRouter", "/t", "REG_DWORD", "/d",
+                         str(previous), "/f"], capture_output=True, timeout=5)
+                _forwarding_prev.update({"windows_known": False, "windows": None})
             # Deja RemoteAccess como estaba antes de que lo tocaramos.
             prev = _win_remoteaccess_prev
             if prev["start"] is not None:
@@ -380,11 +422,10 @@ class Blocker:
             self.my_mac = (get_if_hwaddr(iface) or "").lower()
         except Exception:
             self.my_mac = ""
-        # Sumidero del bloqueo: NUESTRA PROPIA MAC. El equipo manda su trafico a
-        # esta PC (que SI existe y responde, asi no re-resuelve al router) y aqui
-        # muere porque no reenviamos. Es lo que hace NetCut y aguanta mucho mejor
-        # que una MAC inexistente. Si no sabemos nuestra MAC, caemos al agujero.
-        self.sink_mac = self.my_mac or BLACKHOLE_MAC
+        # Usa una MAC localmente administrada distinta de la nuestra. Asi el
+        # bloqueo no depende del estado GLOBAL del reenvio IP y puede convivir
+        # con una inspeccion activa sin que el SO reenvie los paquetes bloqueados.
+        self.sink_mac = BLACKHOLE_MAC
         self.gateway6 = _gateway6()   # '' si la red no tiene IPv6
 
     def _victim6(self, mac):
@@ -399,9 +440,9 @@ class Blocker:
         return _eui64_ll(mac)
 
     def _poison(self, ip, mac):
-        """Envenena en LAS DOS direcciones (agresivo), apuntando a NUESTRA MAC:
+        """Envenena en LAS DOS direcciones, apuntando a la MAC sumidero:
           - al equipo: "el router (gateway_ip) esta en <sink_mac>" -> su trafico
-            a internet viene a esta PC y muere (no reenviamos).
+            a internet se descarta en la LAN.
           - al router: "el equipo (ip) esta en <sink_mac>" -> las respuestas
             tampoco le llegan.
         Envenena IPv4 (ARP) e IPv6 (NDP), porque hoy gran parte del trafico
@@ -442,12 +483,6 @@ class Blocker:
             return False
         if not self._running:
             self._setup()
-            # El sumidero somos NOSOTROS: el trafico del equipo llega aqui y debe
-            # MORIR. Si el reenvio de IP estuviera encendido (p.ej. de una
-            # inspeccion previa), lo reenviariamos y no cortaria. Lo apagamos,
-            # salvo que haya una inspeccion activa que lo necesita.
-            if not interceptor.running():
-                disable_ip_forwarding()
             self._running = True
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
