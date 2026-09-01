@@ -22,6 +22,8 @@ maximo fiable es "Xiaomi · Android 13" (OUI + nmap), no "Redmi Note 11" exacto.
 
 import re
 import socket
+import ipaddress
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 
@@ -137,9 +139,20 @@ def probe_ssdp(ip: str, timeout: float = 2.0) -> dict:
     info = {}
     if server:
         info["server"] = server
-    if location:
+    if location and _safe_device_url(location, ip):
         info.update(_fetch_upnp_desc(location))
     return info
+
+
+def _safe_device_url(url: str, expected_ip: str) -> bool:
+    """Impide que un equipo use LOCATION para convertir la app en un proxy SSRF."""
+    try:
+        parsed = urlsplit(url)
+        host = ipaddress.ip_address(parsed.hostname or "")
+        expected = ipaddress.ip_address(expected_ip)
+    except (ValueError, TypeError):
+        return False
+    return parsed.scheme == "http" and host == expected and parsed.username is None
 
 
 def _fetch_upnp_desc(url: str, timeout: float = 2.0) -> dict:
