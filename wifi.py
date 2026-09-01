@@ -277,6 +277,7 @@ def get_public_network_info() -> dict:
 #  "last seen" lo llevamos nosotros entre escaneos.
 # --------------------------------------------------------------------------- #
 _ap_seen = {}   # bssid -> {first_seen, last_seen}
+_MAX_AP_HISTORY = 4096
 
 
 def _chan_to_freq(channel, band=""):
@@ -400,6 +401,13 @@ def scan_networks() -> dict:
                 "detail": "El escaneo de redes al alcance solo está disponible "
                           "en Windows y Linux por ahora."}
     nets = [_finalize_ap(n) for n in rows]
+    if len(_ap_seen) > _MAX_AP_HISTORY:
+        keep = sorted(_ap_seen, key=lambda key: _ap_seen[key]["last_seen"],
+                      reverse=True)[:_MAX_AP_HISTORY]
+        keep = set(keep)
+        for key in list(_ap_seen):
+            if key not in keep:
+                _ap_seen.pop(key, None)
     # Fabricante del router por su MAC (OUI), reutilizando la base y cache que ya
     # mantiene el scanner (no descarga nada extra).
     try:
