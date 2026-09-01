@@ -109,8 +109,9 @@ async function load(){
 }
 async function resetTraffic(){ await NS.post("/api/traffic/reset"); load(); }
 async function pollTraffic(){
-  await load();
-  window.setTimeout(pollTraffic,500);
+  try{ await load(); }
+  catch(e){ /* un fallo transitorio no debe detener el sondeo para siempre */ }
+  finally{ window.setTimeout(pollTraffic,500); }
 }
 pollTraffic();
 animationFrame=requestAnimationFrame(animateChart);
