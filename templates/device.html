@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <h1 id="dTitle">equipo #{{ identity_id }}</h1><span class="device-state" id="deviceState">-</span>
+    <div class="device-title-row"><span class="device-hero-icon" id="deviceHeroIcon"></span><h1 id="dTitle">equipo #{{ identity_id }}</h1><span class="device-state" id="deviceState">-</span></div>
     <p><a href="/devices" style="color:var(--green)">&larr; volver al arbol</a></p>
   </div>
   <div class="actions">
@@ -28,6 +28,15 @@
     <div style="padding:6px 16px 16px" id="detail" class="kv">cargando...</div>
   </div>
 
+  <div class="card flow-card">
+    <div class="card-h">
+      <span class="t">Flujos enviados y recibidos</span>
+      <span class="c" id="flowHint">activa Inspeccionar</span>
+    </div>
+    <div class="flow-head"><span>Destino / dominio</span><span>Protocolo</span><span>Enviado</span><span>Recibido</span><span>Paquetes</span><span>Actividad</span></div>
+    <div id="flowList"><div class="empty">Activa "Inspeccionar" y genera trafico desde el dispositivo.</div></div>
+  </div>
+
   <div class="card">
     <div class="card-h"><span class="t">Ficha técnica</span><span class="c" id="fpHint">modelo · sistema</span></div>
     <div style="padding:6px 16px 16px" id="fingerprintBox" class="kv">cargando…</div>
@@ -45,7 +54,7 @@
     <div style="padding:6px 16px 16px" id="signalsBox" class="kv">cargando…</div>
   </div>
 
-  <div class="card">
+  <div class="card flow-card">
     <div class="card-h">
       <span class="t">Log de conexiones</span>
       <span class="log-tools"><select id="logFilter" class="device-select" aria-label="Filtrar log"><option value="all">Todo</option><option value="dns">DNS</option><option value="sni">SNI</option><option value="quic">QUIC</option><option value="http">HTTP</option><option value="ua">User-Agent</option></select><a class="btn sm" id="exportLog" href="#">Exportar CSV</a><button class="btn sm ghost" onclick="clearLog()">Limpiar</button></span>
@@ -62,6 +71,11 @@
 </div>
 
 <div class="note">
+  <b>Flujos:</b> la tabla cuenta todos los paquetes IPv4 enviados y recibidos,
+  incluso cuando el contenido está cifrado, y los agrupa por destino, protocolo
+  y puerto. Para capturar otro equipo, NetScope debe ejecutarse como administrador
+  y ambos deben estar en la misma red; el aislamiento de clientes del router puede
+  impedir la inspección.
   <b>Sobre los enlaces:</b> ves <b>a dónde</b> habla el equipo, no el contenido
   (con HTTPS la ruta va cifrada; lo máximo es el dominio).
   <b>DNS</b> = dominio que resuelve · <b>SNI</b> = servidor TLS sobre TCP ·
