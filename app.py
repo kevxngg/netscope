@@ -93,6 +93,7 @@ def _do_scan_fast():
         _scan_generation += 1
         generation = _scan_generation
         monitor.set_local_context(own_ips, [cidr for _, cidr, _ in networks])
+        monitor.set_capture_interface(networks[0][0])
     return devices, own_ips, generation, SITE
 
 
@@ -122,6 +123,19 @@ def _enrich_and_store(devices, own_ips, generation, site_id):
                 vendor = d.get("vendor", "")
                 if vendor and vendor.lower() != "desconocido":
                     store.set_identity_vendor(iid, vendor)
+                # Conserva los metadatos anunciados por el propio equipo (UPnP
+                # y mDNS). Sin persistirlos, el modelo/marca desaparecia entre
+                # escaneos y la clasificacion visual volvia a "desconocido".
+                allowed_facts = {
+                    "server", "manufacturer", "model_name", "model_number",
+                    "model_desc", "friendly_name", "device_type", "model_mdns",
+                }
+                saved_facts = store.facts_of(iid)
+                for key, value in (d.get("facts") or {}).items():
+                    clean_value = str(value)[:1000] if value not in (None, "") else ""
+                    if (key in allowed_facts and clean_value
+                            and saved_facts.get(key) != clean_value):
+                        store.set_fact(iid, key, clean_value)
                 store.record_observation(site_id, "arp", identity_id=iid, mac=d["mac"],
                                          ip=d["ip"], hostname=d.get("name", ""),
                                          vendor=d.get("vendor", ""), dhcp_fp=dhcp_fp)
@@ -251,8 +265,9 @@ def _identity_view(ident, online, traffic_by_ip, last_obs=None):
     last_obs = last_obs or {}
     ip = online.get("ip") or last_obs.get("ip") or ""
     stats = traffic_by_ip.get(online.get("ip"), {}) if online.get("ip") else {}
-    label = ident.get("label_manual") or ident.get("label") or ""
-    return {
+    label = (ident.get("label_manual") or ident.get("label")
+             or online.get("name") or last_obs.get("hostname") or "")
+    view = {
         "identity_id": ident["id"],
         "label": ident.get("label") or "",
         "label_manual": ident.get("label_manual") or "",
@@ -266,11 +281,16 @@ def _identity_view(ident, online, traffic_by_ip, last_obs=None):
         "mac": online.get("mac") or last_obs.get("mac") or "",
         "vendor": online.get("vendor") or ident.get("vendor") or last_obs.get("vendor") or "",
         "iface": online.get("iface", ""),
+        "discovery": online.get("discovery", ""),
         "is_self": bool(online.get("is_self")),
         "traffic": stats.get("bytes", 0),
         "sent_bytes": stats.get("sent_bytes", 0),
         "recv_bytes": stats.get("recv_bytes", 0),
     }
+    facts = store.facts_of(ident["id"])
+    view.update(fingerprint.classify_device(
+        {**facts, **view}, is_gateway=bool(ip and ip == _last_scan.get("gateway"))))
+    return view
 
 
 def _sync_inspected():
@@ -305,7 +325,8 @@ def _build_fingerprint(identity_id, view):
         "vendor": view.get("vendor", ""),
         "model": fingerprint.best_model(facts),
         "os": fingerprint.best_os(facts),
-        "device_type": facts.get("device_type", ""),
+        "device_type": facts.get("device_type") or view.get("device_type_label", ""),
+        "brand": view.get("brand", ""),
         "manufacturer": facts.get("manufacturer", ""),
         "friendly_name": facts.get("friendly_name", ""),
         "model_number": facts.get("model_number", ""),
@@ -478,18 +499,22 @@ def api_devices():
         if d.get("identity_id") or d.get("ip") in seen_ips:
             continue
         stats = traffic_by_ip.get(d.get("ip"), {})
-        rows.append({
+        row = {
             "identity_id": None, "label": "", "label_manual": "",
             "name": d.get("name") or "(sin nombre)",
             "confidence": 0.0, "trusted": False, "online": True,
             "ip": d.get("ip", ""), "mac": d.get("mac", ""),
             "vendor": d.get("vendor", ""), "iface": d.get("iface", ""),
+            "discovery": d.get("discovery", ""),
             "is_self": bool(d.get("is_self")),
             "first_seen": None, "last_seen": None,
             "traffic": stats.get("bytes", 0),
             "sent_bytes": stats.get("sent_bytes", 0),
             "recv_bytes": stats.get("recv_bytes", 0),
-        })
+        }
+        row.update(fingerprint.classify_device(
+            row, is_gateway=bool(row["ip"] and row["ip"] == _last_scan.get("gateway"))))
+        rows.append(row)
     return jsonify({"devices": rows, "gateway": _last_scan["gateway"],
                     "ts": _last_scan["ts"],
                     "enriching": _last_scan.get("enriching", False),
@@ -511,6 +536,7 @@ def api_device(identity_id):
     return jsonify({"ok": True, "device": view, "signals": signals,
                     "ports": store.ports_of(identity_id), "history": history,
                     "fingerprint": _build_fingerprint(identity_id, view),
+                    "flows": monitor.flows_for(view["ip"]) if view["ip"] else [],
                     "inspecting": bool(view["ip"]) and view["ip"] in interceptor.list_targets()})
 
 @app.route("/api/scan", methods=["POST"])
@@ -598,7 +624,11 @@ def api_log():
         return jsonify({"ok": False, "error": "since invalido"}), 400
     events = monitor.log_since(ip, since)
     latest = events[-1]["seq"] if events else since
-    return jsonify({"ip": ip, "events": events, "latest": latest})
+    return jsonify({"ip": ip, "events": events, "latest": latest,
+                    "flows": monitor.flows_for(ip),
+                    "capture_running": monitor.running(),
+                    "capture_iface": monitor.capture_interface(),
+                    "capture_error": monitor.capture_error()})
 
 @app.route("/api/log/reset", methods=["POST"])
 def api_log_reset():
@@ -744,8 +774,11 @@ def api_inspect_start():
     if not ip:
         return jsonify({"ok": False, "error": "el equipo esta ausente o la IP no es local"}), 409
     try:
+        already_active = ip in interceptor.list_targets()
         if not interceptor.running():
             interceptor.start()
+        if not already_active:
+            monitor.begin_inspection(ip)
         ok = interceptor.add_target(ip, mac=mac)
         _sync_inspected()
         if not ok:
@@ -775,6 +808,9 @@ def api_inspect_stop():
 @app.route("/api/inspect/status")
 def api_inspect_status():
     return jsonify({"running": interceptor.running(),
+                    "capture_running": monitor.running(),
+                    "capture_iface": monitor.capture_interface(),
+                    "capture_error": monitor.capture_error(),
                     "targets": interceptor.list_targets()})
 
 
