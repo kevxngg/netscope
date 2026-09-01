@@ -11,6 +11,7 @@ import os
 import sys
 import platform
 import shutil
+import subprocess
 
 
 # --------------------------------------------------------------------------- #
@@ -62,11 +63,13 @@ def relaunch_as_admin() -> bool:
         args = [script] + sys.argv[1:]
         if system == "Windows":
             import ctypes
-            params = " ".join('"%s"' % a for a in args)
+            params = subprocess.list2cmdline(args)
             workdir = os.path.dirname(script)
             # "runas" dispara el aviso de UAC
-            ctypes.windll.shell32.ShellExecuteW(
+            result = ctypes.windll.shell32.ShellExecuteW(
                 None, "runas", sys.executable, params, workdir, 1)
+            if result <= 32:
+                raise OSError(f"ShellExecuteW fallo con codigo {result}")
             return False  # el proceso actual (sin privilegios) debe salir
         else:
             # Re-ejecuta con sudo (pide contrasena). execvp reemplaza el proceso.
