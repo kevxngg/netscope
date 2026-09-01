@@ -3,9 +3,11 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import app as app_module
 import fingerprint
+import scanner
 from core import identity, store
 from sniffer import TrafficMonitor
 
@@ -106,6 +108,67 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(store.facts_of(keep)["model_name"], "TV")
         self.assertEqual(store.list_events(app_module.SITE)[0]["identity_id"], keep)
         self.assertIsNone(store.get_identity(drop))
+
+    def test_device_classification_uses_multiple_signals(self):
+        cases = (
+            ({"vendor": "Samsung", "name": "Galaxy S24"}, False, "phone", "Samsung"),
+            ({"vendor": "Xiaomi", "model_name": "Redmi Note 13"}, False, "phone", "Xiaomi"),
+            ({"manufacturer": "Apple", "model_name": "iPad Pro"}, False, "tablet", "Apple"),
+            ({"vendor": "Hikvision", "friendly_name": "IP Camera"}, False, "camera", "Hikvision"),
+            ({"vendor": "TP-Link"}, True, "router", "TP-Link"),
+            ({"os": "Windows 11", "vendor": "Dell"}, False, "computer", "Dell"),
+        )
+        for data, gateway, expected_type, expected_brand in cases:
+            with self.subTest(data=data):
+                profile = fingerprint.classify_device(data, is_gateway=gateway)
+                self.assertEqual(profile["device_type"], expected_type)
+                self.assertEqual(profile["brand"], expected_brand)
+
+    def test_neighbor_output_parser_accepts_windows_and_linux(self):
+        output = """
+          192.168.1.1          00-11-22-33-44-55     dynamic
+          192.168.1.255        ff-ff-ff-ff-ff-ff     static
+          192.168.1.20 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
+        """
+        rows = scanner._parse_neighbor_output(output)
+        pairs = {(row["ip"], row["mac"]) for row in rows}
+        self.assertIn(("192.168.1.1", "00:11:22:33:44:55"), pairs)
+        self.assertIn(("192.168.1.20", "aa:bb:cc:dd:ee:ff"), pairs)
+        self.assertNotIn(("192.168.1.255", "ff:ff:ff:ff:ff:ff"), pairs)
+
+    def test_inspected_flows_include_sent_and_received_bytes(self):
+        try:
+            from scapy.layers.inet import IP, TCP
+            from scapy.packet import Raw
+        except ImportError:
+            self.skipTest("Scapy no esta instalado")
+        monitor = TrafficMonitor()
+        target = "192.168.1.20"
+        monitor.set_local_context({"192.168.1.2"}, ["192.168.1.0/24"])
+        monitor.set_inspected({target})
+        monitor._handle(IP(src=target, dst="8.8.8.8") /
+                        TCP(sport=50000, dport=443) / Raw(b"hola"))
+        monitor._handle(IP(src="8.8.8.8", dst=target) /
+                        TCP(sport=443, dport=50000) / Raw(b"respuesta"))
+        rows = monitor.flows_for(target)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["peer_ip"], "8.8.8.8")
+        self.assertEqual(rows[0]["port"], 443)
+        self.assertGreater(rows[0]["sent_bytes"], 0)
+        self.assertGreater(rows[0]["recv_bytes"], 0)
+        self.assertEqual(rows[0]["packets"], 2)
+
+    def test_scan_persists_device_metadata(self):
+        device = {"ip": "192.168.1.30", "mac": "00:11:22:33:44:66",
+                  "name": "Sala", "vendor": "Samsung",
+                  "facts": {"manufacturer": "Samsung", "model_name": "Smart TV"}}
+        with patch.object(scanner, "enrich_all", return_value=[device]):
+            app_module._scan_generation = 7
+            app_module._enrich_and_store(
+                [device], set(), 7, app_module.SITE)
+        facts = store.facts_of(device["identity_id"])
+        self.assertEqual(facts["manufacturer"], "Samsung")
+        self.assertEqual(facts["model_name"], "Smart TV")
 
 
 if __name__ == "__main__":
