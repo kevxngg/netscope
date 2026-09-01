@@ -75,6 +75,7 @@ def parse_http_ua(payload: bytes):
 class TrafficMonitor:
     MAX_EVENTS = 1000
     MAX_STATS = 10000
+    MAX_FLOWS_PER_DEVICE = 512
 
     def __init__(self):
         self.stats = defaultdict(lambda: [0, 0, 0, 0, 0.0])  # pkts,bytes,sent,recv,last
@@ -83,6 +84,8 @@ class TrafficMonitor:
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
+        self._capture_iface = None
+        self._capture_error = ""
         self._local_ips = set()
         self._local_networks = ()
         self._inspected = set()   # solo estas IPs reciben analisis SNI/HTTP
@@ -92,6 +95,7 @@ class TrafficMonitor:
         self._ext_names = {}      # ip externa -> dominio (de respuestas DNS / SNI)
         self._ptr_tried = set()   # ips a las que ya se les intento DNS inverso
         self._http_ua = {}        # ip local -> mejor User-Agent visto (modelo/SO)
+        self._flows = defaultdict(dict)  # ip inspeccionada -> flujos por peer/proto/puerto
 
     def set_local_context(self, ips, networks=()):
         """Actualiza IPs propias y subredes observadas de forma atomica."""
@@ -105,6 +109,18 @@ class TrafficMonitor:
             self._local_ips = set(ips)
             self._local_networks = tuple(parsed)
 
+    def set_capture_interface(self, iface):
+        with self._lock:
+            self._capture_iface = iface or None
+
+    def capture_interface(self):
+        with self._lock:
+            return str(self._capture_iface or "")
+
+    def capture_error(self):
+        with self._lock:
+            return self._capture_error
+
     def set_local_ips(self, ips):
         """Compatibilidad con llamadas antiguas."""
         self.set_local_context(ips)
@@ -113,44 +129,63 @@ class TrafficMonitor:
         with self._lock:
             self._inspected = set(ips)
 
+    def begin_inspection(self, ip):
+        """Inicia una sesion limpia para que la UI muestre solo datos nuevos."""
+        with self._lock:
+            self.log.pop(ip, None)
+            self._flows.pop(ip, None)
+
+    def running(self):
+        with self._lock:
+            return self._running
+
     def _is_local(self, ip):
         try:
             addr = ipaddress.ip_address(ip)
-        except ValueError:
+        except (TypeError, ValueError):
             return False
         return any(addr in network for network in self._local_networks)
 
     def dhcp_fp_for(self, mac):
         """Huella DHCP observada para una MAC (vacio si aun no se vio ningun DHCP)."""
-        return self._dhcp.get((mac or "").lower(), "")
+        with self._lock:
+            return self._dhcp.get((mac or "").lower(), "")
 
     def dhcp_host_for(self, mac):
         """Hostname que el equipo anuncio por DHCP (vacio si no se ha visto)."""
-        return self._dhcp_host.get((mac or "").lower(), "")
+        with self._lock:
+            return self._dhcp_host.get((mac or "").lower(), "")
 
     def ip6_ll_for(self, mac):
         """Link-local IPv6 vista para una MAC (vacio si aun no se ha observado)."""
-        return self._ip6_ll_by_mac.get((mac or "").lower(), "")
+        with self._lock:
+            return self._ip6_ll_by_mac.get((mac or "").lower(), "")
 
     def device_ua(self, ip):
         """Mejor User-Agent HTTP visto para una IP local (vacio si ninguno)."""
-        return self._http_ua.get(ip, "")
+        with self._lock:
+            return self._http_ua.get(ip, "")
 
     _MAX_EXT_NAMES = 8000
 
     def _note_ext(self, ip, name):
-        if ip and name and (ip in self._ext_names
-                            or len(self._ext_names) < self._MAX_EXT_NAMES):
-            self._ext_names.setdefault(ip, name)
+        with self._lock:
+            if ip and name and (ip in self._ext_names
+                                or len(self._ext_names) < self._MAX_EXT_NAMES):
+                self._ext_names.setdefault(ip, name)
 
     def note_name(self, ip, name):
         if not ip:
             return
-        self._ptr_tried.add(ip)
-        self._note_ext(ip, name)
+        with self._lock:
+            self._ptr_tried.add(ip)
+            if name and (ip in self._ext_names
+                         or len(self._ext_names) < self._MAX_EXT_NAMES):
+                self._ext_names.setdefault(ip, name)
 
     def ptr_tried(self, ip):
-        return ip in self._ptr_tried
+        with self._lock:
+            return ip in self._ptr_tried
 
     def _add_event(self, ip, kind, value):
         dq = self.log[ip]
@@ -158,6 +193,22 @@ class TrafficMonitor:
             return
         self._seq += 1
         dq.append({"seq": self._seq, "ts": time.time(), "kind": kind, "value": value})
+
+    def _record_flow_locked(self, target, peer, proto, port, outgoing, size, now):
+        flows = self._flows[target]
+        key = (peer, proto, int(port or 0))
+        row = flows.get(key)
+        if row is None:
+            row = {"peer_ip": peer, "proto": proto, "port": int(port or 0),
+                   "sent_bytes": 0, "recv_bytes": 0, "packets": 0,
+                   "first_seen": now, "last_seen": now}
+            flows[key] = row
+        row["sent_bytes" if outgoing else "recv_bytes"] += size
+        row["packets"] += 1
+        row["last_seen"] = now
+        if len(flows) > self.MAX_FLOWS_PER_DEVICE:
+            oldest = min(flows, key=lambda item: flows[item]["last_seen"])
+            flows.pop(oldest, None)
 
     def _prune_stats_locked(self):
         """Acota peers historicos sin expulsar equipos locales o inspeccionados."""
@@ -187,7 +238,8 @@ class TrafficMonitor:
                 from scapy.layers.inet6 import IPv6
                 ip6 = pkt.getlayer(IPv6)
                 if ip6 is not None and (ip6.src or "").startswith("fe80"):
-                    self._ip6_ll_by_mac[(pkt.src or "").lower()] = ip6.src
+                    with self._lock:
+                        self._ip6_ll_by_mac[(pkt.src or "").lower()] = ip6.src
             except Exception:
                 pass
 
@@ -198,14 +250,29 @@ class TrafficMonitor:
             dst = ip_layer.dst
             size = len(pkt)
 
-            # contadores (barato)
-            with self._lock:
-                s = self.stats[src]; s[0]+=1; s[1]+=size; s[2]+=size; s[4]=time.time()
-                d = self.stats[dst]; d[0]+=1; d[1]+=size; d[3]+=size; d[4]=s[4]
-                self._prune_stats_locked()
-
-            insp_src = src in self._inspected
+            tcp = pkt.getlayer(TCP)
             udp = pkt.getlayer(UDP)
+            if tcp is not None:
+                proto = "TCP"
+            elif udp is not None:
+                proto = "UDP"
+            else:
+                proto = "IP" + str(getattr(ip_layer, "proto", ""))
+
+            # contadores y flujos inspeccionados (barato)
+            with self._lock:
+                now = time.time()
+                s = self.stats[src]; s[0]+=1; s[1]+=size; s[2]+=size; s[4]=now
+                d = self.stats[dst]; d[0]+=1; d[1]+=size; d[3]+=size; d[4]=now
+                insp_src = src in self._inspected
+                insp_dst = dst in self._inspected
+                if insp_src:
+                    remote_port = tcp.dport if tcp is not None else udp.dport if udp is not None else 0
+                    self._record_flow_locked(src, dst, proto, remote_port, True, size, now)
+                if insp_dst:
+                    remote_port = tcp.sport if tcp is not None else udp.sport if udp is not None else 0
+                    self._record_flow_locked(dst, src, proto, remote_port, False, size, now)
+                self._prune_stats_locked()
 
             # DHCP (puertos 67/68): huella de opciones -> re-vincula un equipo
             # cuando SOLO cambio la MAC. Barato: los DHCP son poco frecuentes.
@@ -255,7 +322,6 @@ class TrafficMonitor:
                             self._add_event(src, "quic", self._ext_names.get(dst) or dst)
                 return
 
-            tcp = pkt.getlayer(TCP)
             if tcp is None:
                 return
             load = bytes(tcp.payload)
@@ -282,9 +348,9 @@ class TrafficMonitor:
                 ua = parse_http_ua(load)
                 if ua:
                     # nos quedamos con el UA mas largo (suele ser el mas completo)
-                    if len(ua) > len(self._http_ua.get(src, "")):
-                        self._http_ua[src] = ua
                     with self._lock:
+                        if len(ua) > len(self._http_ua.get(src, "")):
+                            self._http_ua[src] = ua
                         self._add_event(src, "ua", ua)
         except Exception:
             pass
@@ -321,7 +387,8 @@ class TrafficMonitor:
                     host = host.decode(errors="ignore")
                 host = str(host).strip()
                 if host:
-                    self._dhcp_host[mac] = host
+                    with self._lock:
+                        self._dhcp_host[mac] = host
 
             # Huella DHCP (opcion 55 [+ 60]): re-vincula un equipo cuando cambia
             # solo la MAC. Puede faltar en un ACK del servidor: no pasa nada.
@@ -335,7 +402,8 @@ class TrafficMonitor:
                     if isinstance(vcls, bytes):
                         vcls = vcls.decode(errors="ignore")
                     fp += "|" + str(vcls)
-                self._dhcp[mac] = fp
+                with self._lock:
+                    self._dhcp[mac] = fp
         except Exception:
             pass
 
@@ -345,8 +413,17 @@ class TrafficMonitor:
         # paquetes; stop_filter solo se evalua cuando llega uno.
         while self._running:
             try:
-                sniff(prn=self._handle, store=0, timeout=2)
-            except Exception:
+                with self._lock:
+                    iface = self._capture_iface
+                options = {"prn": self._handle, "store": 0, "timeout": 2}
+                if iface:
+                    options["iface"] = iface
+                sniff(**options)
+                with self._lock:
+                    self._capture_error = ""
+            except Exception as exc:
+                with self._lock:
+                    self._capture_error = str(exc)[:300]
                 time.sleep(1)
 
     def start(self):
@@ -354,6 +431,7 @@ class TrafficMonitor:
             if self._running:
                 return
             self._running = True
+            self._capture_error = ""
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
 
@@ -380,15 +458,30 @@ class TrafficMonitor:
             items = [e for e in self.log.get(ip, ()) if e["seq"] > since_seq]
         return items[-limit:]
 
+    def flows_for(self, ip, limit=100):
+        """Flujos observados para un objetivo, agregados por peer/protocolo/puerto."""
+        with self._lock:
+            rows = []
+            for flow in self._flows.get(ip, {}).values():
+                row = dict(flow)
+                row["peer_host"] = self._ext_names.get(row["peer_ip"], "")
+                row["peer_local"] = self._is_local(row["peer_ip"])
+                row["bytes"] = row["sent_bytes"] + row["recv_bytes"]
+                rows.append(row)
+        rows.sort(key=lambda row: (row["last_seen"], row["bytes"]), reverse=True)
+        return rows[:max(1, min(int(limit or 100), 500))]
+
     def reset_log(self, ip):
         with self._lock:
             self.log.pop(ip, None)
+            self._flows.pop(ip, None)
 
     def reset(self):
         with self._lock:
             self.stats.clear()
             self.log.clear()
             self._http_ua.clear()
+            self._flows.clear()
 
     def summary(self):
         with self._lock:
