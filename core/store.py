@@ -33,10 +33,19 @@ DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 _lock = threading.Lock()
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Conexion cuyo contexto confirma/revierte y tambien libera el archivo."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def _conn():
-    c = sqlite3.connect(DB, timeout=5)
+    c = sqlite3.connect(DB, timeout=5, factory=_ClosingConnection)
     c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA foreign_keys=ON")
     return c
 
@@ -191,6 +200,9 @@ def _aside_legacy_db():
 def init():
     _aside_legacy_db()
     with _lock, _conn() as c:
+        # journal_mode es persistente: configurarlo en cada lectura puede crear
+        # contencion y errores "database is locked" innecesarios.
+        c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
 
 
@@ -331,21 +343,53 @@ def all_identities(site_id=None):
 
 
 def merge_identities(keep_id, drop_id):
-    """Fusiona a mano dos identidades: mueve las senales de drop -> keep y borra drop."""
+    """Fusiona dos identidades del mismo sitio sin perder datos relacionados."""
+    if keep_id == drop_id:
+        return False
     with _lock, _conn() as c:
-        sigs = c.execute("SELECT kind,value,weight FROM identity_signals "
+        keep = c.execute("SELECT * FROM identities WHERE id=?", (keep_id,)).fetchone()
+        drop = c.execute("SELECT * FROM identities WHERE id=?", (drop_id,)).fetchone()
+        if not keep or not drop or keep["site_id"] != drop["site_id"]:
+            return False
+        sigs = c.execute("SELECT kind,value,weight,first_seen,last_seen FROM identity_signals "
                          "WHERE identity_id=?", (drop_id,)).fetchall()
         for s in sigs:
-            c.execute("INSERT OR IGNORE INTO identity_signals"
+            c.execute("INSERT INTO identity_signals"
                       "(identity_id,kind,value,weight,first_seen,last_seen) "
-                      "VALUES(?,?,?,?,?,?)",
+                      "VALUES(?,?,?,?,?,?) ON CONFLICT(identity_id,kind,value) "
+                      "DO UPDATE SET weight=MAX(weight,excluded.weight), "
+                      "first_seen=MIN(first_seen,excluded.first_seen), "
+                      "last_seen=MAX(last_seen,excluded.last_seen)",
                       (keep_id, s["kind"], s["value"], s["weight"],
-                       time.time(), time.time()))
+                       s["first_seen"], s["last_seen"]))
+        for p in c.execute("SELECT * FROM ports WHERE identity_id=?", (drop_id,)):
+            c.execute(
+                "INSERT INTO ports(identity_id,port,proto,service,product,version,ts) "
+                "VALUES(?,?,?,?,?,?,?) ON CONFLICT(identity_id,port,proto) DO UPDATE SET "
+                "service=excluded.service,product=excluded.product,"
+                "version=excluded.version,ts=MAX(ts,excluded.ts)",
+                (keep_id, p["port"], p["proto"], p["service"], p["product"],
+                 p["version"], p["ts"]))
+        for fact in c.execute("SELECT key,value,ts FROM identity_facts WHERE identity_id=?",
+                              (drop_id,)):
+            c.execute(
+                "INSERT INTO identity_facts(identity_id,key,value,ts) VALUES(?,?,?,?) "
+                "ON CONFLICT(identity_id,key) DO UPDATE SET value=CASE WHEN "
+                "excluded.ts > ts THEN excluded.value ELSE value END, ts=MAX(ts,excluded.ts)",
+                (keep_id, fact["key"], fact["value"], fact["ts"]))
         c.execute("UPDATE observations SET identity_id=? WHERE identity_id=?",
                   (keep_id, drop_id))
         c.execute("UPDATE traffic_samples SET identity_id=? WHERE identity_id=?",
                   (keep_id, drop_id))
+        c.execute("UPDATE events SET identity_id=? WHERE identity_id=?", (keep_id, drop_id))
+        c.execute(
+            "UPDATE identities SET first_seen=MIN(first_seen,?),last_seen=MAX(last_seen,?),"
+            "trusted=MAX(trusted,?),vendor=COALESCE(NULLIF(vendor,''),?),"
+            "label=COALESCE(NULLIF(label,''),?) WHERE id=?",
+            (drop["first_seen"], drop["last_seen"], drop["trusted"],
+             drop["vendor"], drop["label"], keep_id))
         c.execute("DELETE FROM identities WHERE id=?", (drop_id,))
+        return True
 
 
 # --------------------------------------------------------------------------- #
@@ -396,14 +440,19 @@ def last_observation(identity_id):
         return dict(row) if row else None
 
 
-def seed_data():
+def seed_data(site_id=None):
     """Fabricante y nombre por MAC conocida, para precargar las caches del scanner."""
     out = {"vendors": {}, "names": {}}
     with _lock, _conn() as c:
-        rows = c.execute(
+        query = (
             "SELECT i.label AS label, i.vendor AS vendor, s.value AS mac "
             "FROM identity_signals s JOIN identities i ON i.id = s.identity_id "
             "WHERE s.kind IN ('mac','mac_random')")
+        params = ()
+        if site_id is not None:
+            query += " AND i.site_id=?"
+            params = (site_id,)
+        rows = c.execute(query, params)
         for r in rows:
             mac = (r["mac"] or "").lower()
             if not mac:
@@ -462,9 +511,10 @@ def purge_traffic(older_than_secs=30 * 86400):
 #  Puertos
 # --------------------------------------------------------------------------- #
 def set_ports(identity_id, ports):
-    """ports: lista de dicts {port, proto, service, product, version}."""
+    """Reemplaza el ultimo snapshot de puertos abiertos de una identidad."""
     now = time.time()
     with _lock, _conn() as c:
+        c.execute("DELETE FROM ports WHERE identity_id=?", (identity_id,))
         for p in ports:
             c.execute(
                 "INSERT INTO ports(identity_id,port,proto,service,product,version,ts) "
