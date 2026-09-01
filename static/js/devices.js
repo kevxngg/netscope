@@ -27,17 +27,6 @@ function confBadge(dv){
   return `<span class="conf ${cls}" title="confianza de identidad ${(c*100).toFixed(0)}%">${txt}</span>`;
 }
 
-function deviceType(device){
-  const value=(displayName(device)+" "+(device.vendor||"")).toLowerCase();
-  if(/camera|camara|cctv|ipcam|hikvision|dahua|wyze|arlo|ring|reolink|nest cam/.test(value)) return {icon:"▥",label:"Cámara"};
-  if(/router|gateway|ubiquiti|tp-link|cisco|netgear|hitron|arris/.test(value)) return {icon:"⌁",label:"Router"};
-  if(/iphone|android|samsung|xiaomi|huawei|pixel|phone|mobile|galaxy/.test(value)) return {icon:"◉",label:"Celular"};
-  if(/printer|impresora|epson|canon|brother|hp /.test(value)) return {icon:"▣",label:"Impresora"};
-  if(/tv|roku|chromecast|playstation|xbox|firestick/.test(value)) return {icon:"▤",label:"TV / consola"};
-  if(/laptop|notebook|desktop|computer|computador|pc|windows|linux|macbook|intel|dell|lenovo|asus|acer|apple/.test(value)) return {icon:"◇",label:"Computador"};
-  return {icon:"◇",label:"Dispositivo"};
-}
-
 function render(){
   const el=document.getElementById("tree");
   if(!devices.length){
@@ -45,7 +34,7 @@ function render(){
     return;
   }
   const filtered=devices.filter(dv=>{
-    const hay=[dv.ip,dv.mac,dv.name,dv.label,dv.label_manual,dv.vendor].join(" ").toLowerCase();
+    const hay=[dv.ip,dv.mac,dv.name,dv.label,dv.label_manual,dv.vendor,dv.brand,dv.device_type_label].join(" ").toLowerCase();
     const matches=!searchTerm||hay.includes(searchTerm);
     let status=true;
     if(filterMode==="online") status=dv.online;
@@ -53,6 +42,7 @@ function render(){
     else if(filterMode==="unknown") status=!dv.trusted;
     else if(filterMode==="trusted") status=dv.trusted;
     else if(filterMode==="unnamed") status=!displayName(dv);
+    else if(filterMode.startsWith("type:")) status=dv.device_type===filterMode.slice(5);
     return matches&&status;
   }).sort((a,b)=>{
     if(sortMode==="name") return displayName(a).localeCompare(displayName(b));
@@ -63,7 +53,7 @@ function render(){
   });
   const gwDev=filtered.find(x=>x.ip===gateway);
   const branches=filtered.filter(x=>x.ip!==gateway);
-  let h=`<div class="root">[router] ${gateway||"?"} &nbsp; ${gwDev?NS.esc(gwDev.vendor||""):""}</div>`;
+  let h=`<div class="root"><span class="root-icon">${NS.deviceIcon("router")}</span><span>Router ${NS.esc(gateway||"?")}${gwDev&&gwDev.brand?` · ${NS.esc(gwDev.brand)}`:""}</span></div>`;
   if(!filtered.length) h+=`<div class="empty">ningún dispositivo coincide con este filtro.</div>`;
   branches.forEach(dv=>{
     const hasId = dv.identity_id!=null;
@@ -72,12 +62,12 @@ function render(){
     const shown = displayName(dv);
     const nm = shown?NS.esc(shown):`<span style="color:var(--faint)">${enriching||!hasId?"…":"(sin nombre)"}</span>`;
     const vn = dv.vendor?NS.esc(dv.vendor):(enriching?'<span style="color:var(--faint)">…</span>':"");
-    const type=deviceType(dv), traffic=NS.fmt(dv.traffic||0);
+    const type=NS.deviceProfile(dv), traffic=NS.fmt(dv.traffic||0);
     const seen=dv.last_seen?"visto "+new Date(dv.last_seen*1000).toLocaleDateString():"sin historial";
     const trustLabel=dv.trusted?"Marcar como desconocido":"Marcar como confiable";
     h+=`<div class="dev ${dv.online?'':'is-offline'}" ${href?`onclick="location.href='${href}'"`:''} style="${href?'':'cursor:default'}">
-      <span class="dev-icon" aria-hidden="true">${type.icon}</span>
-      <span class="dev-main"><span class="nm">${nm}${dv.is_self?'<span class="self">este equipo</span>':''}${confBadge(dv)}</span><span class="dev-meta"><span class="dev-kind">${type.label}</span><span class="ip num">${dv.ip||"—"}</span><span class="mac num">${NS.esc(dv.mac||"-")}</span></span></span>
+      <span class="dev-icon type-${type.type}" aria-hidden="true">${NS.deviceIcon(type.type)}</span>
+      <span class="dev-main"><span class="nm">${nm}${dv.is_self?'<span class="self">este equipo</span>':''}${confBadge(dv)}</span><span class="dev-meta"><span class="dev-kind">${NS.esc(type.label)}</span>${type.brand?`<span class="brand-badge">${NS.esc(type.brand)}</span>`:""}<span class="ip num">${NS.esc(dv.ip||"—")}</span><span class="mac num">${NS.esc(dv.mac||"-")}</span></span></span>
       <span class="dev-info"><span class="vn">${vn}</span><span class="dev-stats">${dv.online?"conectado":"ausente"} · ${traffic} · ${seen}</span></span>
       <span class="acts">
         ${dv.trusted?'<span class="tag trusted">confiable</span>':'<span class="tag unknown">revisar</span>'}
