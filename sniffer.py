@@ -10,6 +10,7 @@ Optimizaciones para que no se trabe:
 
 import time
 import threading
+import ipaddress
 from collections import defaultdict, deque
 
 
@@ -73,6 +74,7 @@ def parse_http_ua(payload: bytes):
 
 class TrafficMonitor:
     MAX_EVENTS = 1000
+    MAX_STATS = 10000
 
     def __init__(self):
         self.stats = defaultdict(lambda: [0, 0, 0, 0, 0.0])  # pkts,bytes,sent,recv,last
@@ -82,6 +84,7 @@ class TrafficMonitor:
         self._thread = None
         self._running = False
         self._local_ips = set()
+        self._local_networks = ()
         self._inspected = set()   # solo estas IPs reciben analisis SNI/HTTP
         self._dhcp = {}           # mac -> huella DHCP (opcion 55 [+ 60])
         self._dhcp_host = {}      # mac -> hostname anunciado por DHCP (opcion 12)
@@ -90,11 +93,32 @@ class TrafficMonitor:
         self._ptr_tried = set()   # ips a las que ya se les intento DNS inverso
         self._http_ua = {}        # ip local -> mejor User-Agent visto (modelo/SO)
 
+    def set_local_context(self, ips, networks=()):
+        """Actualiza IPs propias y subredes observadas de forma atomica."""
+        parsed = []
+        for cidr in networks:
+            try:
+                parsed.append(ipaddress.ip_network(cidr, strict=False))
+            except ValueError:
+                continue
+        with self._lock:
+            self._local_ips = set(ips)
+            self._local_networks = tuple(parsed)
+
     def set_local_ips(self, ips):
-        self._local_ips = set(ips)
+        """Compatibilidad con llamadas antiguas."""
+        self.set_local_context(ips)
 
     def set_inspected(self, ips):
-        self._inspected = set(ips)
+        with self._lock:
+            self._inspected = set(ips)
+
+    def _is_local(self, ip):
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return any(addr in network for network in self._local_networks)
 
     def dhcp_fp_for(self, mac):
         """Huella DHCP observada para una MAC (vacio si aun no se vio ningun DHCP)."""
@@ -135,6 +159,21 @@ class TrafficMonitor:
         self._seq += 1
         dq.append({"seq": self._seq, "ts": time.time(), "kind": kind, "value": value})
 
+    def _prune_stats_locked(self):
+        """Acota peers historicos sin expulsar equipos locales o inspeccionados."""
+        if len(self.stats) <= self.MAX_STATS:
+            return
+        removable = [
+            (values[4], ip) for ip, values in self.stats.items()
+            if ip not in self._inspected and not self._is_local(ip)
+        ]
+        target_size = max(1, int(self.MAX_STATS * 0.8))
+        for _, ip in sorted(removable)[:max(1, len(self.stats) - target_size)]:
+            self.stats.pop(ip, None)
+            self._ext_names.pop(ip, None)
+            self._ptr_tried.discard(ip)
+            self.log.pop(ip, None)
+
     def _handle(self, pkt):
         try:
             from scapy.layers.inet import IP, TCP, UDP
@@ -163,6 +202,7 @@ class TrafficMonitor:
             with self._lock:
                 s = self.stats[src]; s[0]+=1; s[1]+=size; s[2]+=size; s[4]=time.time()
                 d = self.stats[dst]; d[0]+=1; d[1]+=size; d[3]+=size; d[4]=s[4]
+                self._prune_stats_locked()
 
             insp_src = src in self._inspected
             udp = pkt.getlayer(UDP)
@@ -301,34 +341,36 @@ class TrafficMonitor:
 
     def _run(self):
         from scapy.all import sniff
-        try:
-            sniff(prn=self._handle, store=0,
-                  stop_filter=lambda p: not self._running)
-        except Exception:
-            # fallback: reintento en bucle si sniff falla
-            while self._running:
-                try:
-                    sniff(prn=self._handle, store=0, timeout=2)
-                except Exception:
-                    time.sleep(1)
+        # Un timeout corto permite que stop() termine incluso en una red sin
+        # paquetes; stop_filter solo se evalua cuando llega uno.
+        while self._running:
+            try:
+                sniff(prn=self._handle, store=0, timeout=2)
+            except Exception:
+                time.sleep(1)
 
     def start(self):
-        if self._running:
-            return
-        self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        with self._lock:
+            if self._running:
+                return
+            self._running = True
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
 
     def stop(self):
         self._running = False
+        thread = self._thread
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=3)
+        self._thread = None
 
     def snapshot(self):
         with self._lock:
             data = [{
                 "ip": ip, "packets": s[0], "bytes": s[1],
                 "sent_bytes": s[2], "recv_bytes": s[3], "last_seen": s[4],
-                "is_local": ip in self._local_ips,
-                "host": "" if ip in self._local_ips else self._ext_names.get(ip, ""),
+                "is_local": self._is_local(ip),
+                "host": "" if self._is_local(ip) else self._ext_names.get(ip, ""),
             } for ip, s in self.stats.items()]
         data.sort(key=lambda x: x["bytes"], reverse=True)
         return data
