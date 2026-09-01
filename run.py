@@ -146,12 +146,20 @@ def launch_app_elevated(oid):
         # Eleva el python DEL VENV (asi ve los paquetes instalados).
         import ctypes
         print("   Se abrira una ventana pidiendo permiso (UAC).")
-        ctypes.windll.shell32.ShellExecuteW(
+        result = ctypes.windll.shell32.ShellExecuteW(
             None, "runas", vp, f'"{app}"', HERE, 1)
+        if result <= 32:
+            print(f"   ! No se pudo elevar NetScope (codigo {result}).")
+            return False
     else:
         # sudo + python del venv (por ruta) => root ve los paquetes del venv.
-        print("   Te pedira la contrasena (sudo).")
-        run(["sudo", vp, app])
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            result = run([vp, app])
+        else:
+            print("   Te pedira la contrasena (sudo).")
+            result = run(["sudo", vp, app])
+        return bool(result and result.returncode == 0)
+    return True
 
 
 def main():
@@ -168,7 +176,8 @@ def main():
         sys.exit(1)
     install_nmap(oid)
     check_npcap(oid)
-    launch_app_elevated(oid)
+    if not launch_app_elevated(oid):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
