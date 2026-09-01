@@ -1,7 +1,7 @@
 // ---------- utilidades compartidas ----------
 const NS = {
   fmt(b){ if(!b) return "0 B"; const u=["B","KB","MB","GB","TB"]; const i=Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(i?1:0)+" "+u[i]; },
-  esc(s){ return (s||"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
+  esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
   ipNum(ip){ return ip.split(".").map(Number).reduce((s,o)=>s*256+o,0); },
   hora(ts){ const d=new Date(ts*1000); return d.toLocaleTimeString(); },
   async get(u){ const r=await fetch(u); return r.json(); },
