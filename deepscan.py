@@ -25,7 +25,7 @@ def nmap_available() -> bool:
 def deep_scan(ip: str, timeout: int = 180) -> dict:
     try:
         ipaddress.ip_address(ip)
-    except ValueError:
+    except (TypeError, ValueError):
         return {"ok": False, "error": "la IP no es valida."}
     if not nmap_available():
         return {"ok": False, "error": "nmap no esta instalado en este equipo."}
