@@ -198,3 +198,97 @@ def best_model(facts: dict) -> str:
 def best_os(facts: dict) -> str:
     facts = facts or {}
     return facts.get("os_ua") or facts.get("os_nmap") or ""
+
+
+# --------------------------------------------------------------------------- #
+#  4) Clasificacion visual conservadora
+# --------------------------------------------------------------------------- #
+_BRANDS = (
+    ("Samsung", ("samsung", "galaxy")),
+    ("Xiaomi", ("xiaomi", "redmi", "poco", "mi box", "mi tv")),
+    ("Apple", ("apple", "iphone", "ipad", "macbook", "imac", "apple tv")),
+    ("Huawei", ("huawei",)), ("Honor", ("honor",)),
+    ("Google", ("google", "pixel", "chromecast", "nest")),
+    ("Motorola", ("motorola", "moto ")), ("OnePlus", ("oneplus",)),
+    ("OPPO", ("oppo",)), ("realme", ("realme",)), ("vivo", ("vivo",)),
+    ("Amazon", ("amazon", "kindle", "fire tv", "echo")),
+    ("Microsoft", ("microsoft", "surface", "xbox")),
+    ("Sony", ("sony", "playstation")), ("LG", ("lg electronics", "webos")),
+    ("TP-Link", ("tp-link", "tplink")), ("Ubiquiti", ("ubiquiti", "unifi")),
+    ("Cisco", ("cisco",)), ("NETGEAR", ("netgear",)),
+    ("Hikvision", ("hikvision",)), ("Dahua", ("dahua",)),
+    ("Roku", ("roku",)), ("HP", ("hewlett", " hp ")),
+    ("Epson", ("epson",)), ("Brother", ("brother",)),
+    ("Canon", ("canon",)), ("Lenovo", ("lenovo",)), ("Dell", ("dell",)),
+    ("ASUS", ("asus",)), ("Acer", ("acer",)),
+)
+
+_TYPE_LABELS = {
+    "router": "Router / gateway", "phone": "Celular", "tablet": "Tablet",
+    "computer": "Computador", "camera": "Camara", "printer": "Impresora",
+    "tv": "TV / streaming", "console": "Consola", "speaker": "Altavoz",
+    "wearable": "Reloj / wearable", "network": "Equipo de red",
+    "iot": "Dispositivo IoT", "unknown": "Dispositivo",
+}
+
+
+def classify_device(data: dict, is_gateway: bool = False) -> dict:
+    """Infiere tipo y marca sin inventar un modelo que la red no publico."""
+    data = data or {}
+    values = [
+        data.get("name"), data.get("label"), data.get("label_manual"),
+        data.get("hostname"), data.get("vendor"), data.get("model"),
+        data.get("model_name"), data.get("model_ua"), data.get("model_number"),
+        data.get("friendly_name"), data.get("manufacturer"),
+        data.get("device_type"), data.get("os"), data.get("os_ua"),
+        data.get("os_nmap"),
+    ]
+    text = " ".join(str(value) for value in values if value).lower()
+
+    brand = ""
+    for candidate, needles in _BRANDS:
+        if any(needle in f" {text} " for needle in needles):
+            brand = candidate
+            break
+    if not brand:
+        vendor = str(data.get("vendor") or "").strip()
+        if vendor and vendor.lower() not in {"desconocido", "unknown"}:
+            brand = vendor
+
+    category, confidence = "unknown", "low"
+    if is_gateway or any(x in text for x in ("router", "gateway", "wireless ap")):
+        category, confidence = "router", "high"
+    elif any(x in text for x in ("camera", "camara", "ipcam", "cctv", "hikvision",
+                                  "dahua", "reolink", "doorbell", "video doorbell")):
+        category, confidence = "camera", "high"
+    elif any(x in text for x in ("ipad", "tablet", "tab ", "kindle")):
+        category, confidence = "tablet", "high"
+    elif any(x in text for x in ("iphone", "smartphone", "phone", "pixel ", "galaxy ",
+                                  "redmi", "poco", "oneplus", "motorola", "moto ")):
+        category, confidence = "phone", "high"
+    elif "android" in text and not any(x in text for x in ("tv", "box", "stick")):
+        category, confidence = "phone", "medium"
+    elif any(x in text for x in ("printer", "impresora", "airprint", "ipp printer")):
+        category, confidence = "printer", "high"
+    elif any(x in text for x in ("playstation", "xbox", "nintendo", "game console")):
+        category, confidence = "console", "high"
+    elif any(x in text for x in ("smart tv", "television", "appletv", "apple tv", "roku",
+                                  "chromecast", "fire tv", "media renderer", "mediarenderer",
+                                  "webos", "bravia")):
+        category, confidence = "tv", "high"
+    elif any(x in text for x in ("homepod", "speaker", "altavoz", "sonos", "echo dot")):
+        category, confidence = "speaker", "high"
+    elif any(x in text for x in ("watch", "reloj", "wearable", "fitbit")):
+        category, confidence = "wearable", "high"
+    elif any(x in text for x in ("windows", "macos", "macbook", "imac", "laptop", "desktop",
+                                  "notebook", "computer", "computador", "ubuntu", "chromeos")):
+        category, confidence = "computer", "high"
+    elif any(x in text for x in ("ubiquiti", "unifi", "access point", "switch", "extender",
+                                  "repeater", "mesh", "netgear", "tp-link", "cisco")):
+        category, confidence = "network", "medium"
+    elif any(x in text for x in ("esp32", "esp8266", "tuya", "smart plug", "homekit",
+                                  "iot", "raspberry", "arduino")):
+        category, confidence = "iot", "medium"
+
+    return {"device_type": category, "device_type_label": _TYPE_LABELS[category],
+            "brand": brand, "profile_confidence": confidence}
