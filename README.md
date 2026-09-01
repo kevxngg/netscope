@@ -133,6 +133,19 @@ python diagnostico.py
 El diagnóstico revisa permisos, dependencias, Npcap, nmap, interfaces, gateway
 y realiza una prueba ARP usando la interfaz de red seleccionada por NetScope.
 
+### Pruebas
+
+Las pruebas no requieren `pytest`:
+
+```bash
+python tests/test_identity.py
+python -m unittest -v tests.test_regressions
+python -m compileall -q .
+```
+
+La segunda suite cubre validación HTTP, aislamiento entre sitios, exportaciones
+CSV, seguridad UPnP y fusiones de identidades sin pérdida de datos.
+
 ### Nota para Windows
 
 Instala Python desde [python.org](https://www.python.org/downloads/) (opción
