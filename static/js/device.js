@@ -1,5 +1,5 @@
 const ID = window.DEVICE_ID;
-let inspecting=false, lastSeq=0, logEvents=[], currentIP="", online=false;
+let inspecting=false, lastSeq=0, logEvents=[], flowRows=[], currentIP="", online=false;
 
 const SIGNAL_LABEL={mac:"MAC de fábrica",mac_random:"MAC aleatoria",hostname:"nombre de red",
   dhcp_fp:"huella DHCP",os:"sistema operativo",port_set:"puertos abiertos",schedule:"patrón horario"};
@@ -54,14 +54,17 @@ async function loadDetail(){
   const d = await NS.get("/api/device/"+ID);
   if(!d.ok){ document.getElementById("detail").textContent="identidad no encontrada"; return; }
   const dv=d.device; inspecting=d.inspecting; currentIP=dv.ip||""; online=!!dv.online;
+  const profile=NS.deviceProfile(dv);
   document.getElementById("dTitle").textContent = deviceName(dv);
-  document.getElementById("identityHint").textContent = dv.trusted?"dispositivo confiable":"pendiente de revisar";
+  document.getElementById("deviceHeroIcon").innerHTML=NS.deviceIcon(profile.type);
+  document.getElementById("identityHint").textContent = `${profile.label}${profile.brand?" · "+profile.brand:""} · ${dv.trusted?"confiable":"por revisar"}`;
   const ni=document.getElementById("nameInput"); if(ni && !ni.value) ni.value = dv.label_manual || "";
   const ex=document.getElementById("exportLog"); if(ex) ex.href="/api/export/log.csv?ip="+encodeURIComponent(currentIP);
   const firstSeen=dv.first_seen?new Date(dv.first_seen*1000).toLocaleDateString():"-";
   document.getElementById("detail").innerHTML =
     `<div class="identity-grid"><div><span>IP actual</span><b class="os num">${dv.ip||"— (ausente)"}</b></div><div><span>MAC</span><b class="mac num">${NS.esc(dv.mac||"-")}</b></div><div><span>Fabricante</span><b>${NS.esc(dv.vendor||"-")}</b></div><div><span>Interfaz</span><b>${NS.esc(dv.iface||"-")}</b></div><div><span>Primera vez</span><b>${firstSeen}</b></div><div><span>Estado</span><b>${dv.online?"conectado":"ausente"}</b></div></div>`;
   renderMetrics(dv); renderSignals(d.signals||[], dv); renderHistory(d.history||[]);
+  flowRows=d.flows||[]; renderFlows();
   renderFingerprint(d.fingerprint||{}, dv);
   loadHistTraffic();
   updateInspectBtn(); refreshBlock();
@@ -101,10 +104,12 @@ function updateInspectBtn(){
 }
 
 async function toggleInspect(){
+  const wasInspecting=inspecting;
   const url = inspecting?"/api/inspect/stop":"/api/inspect/start";
   const d = await NS.post(url,{identity_id:ID, ip:currentIP});
   if(!d.ok){ alert("Intercepcion: "+(d.error||"error")); return; }
   inspecting = (d.inspecting||[]).includes(currentIP);
+  if(!wasInspecting&&inspecting){ lastSeq=0; logEvents=[]; flowRows=[]; renderLog(); renderFlows(); }
   updateInspectBtn();
 }
 
@@ -115,7 +120,26 @@ async function pollLog(){
     const d = await NS.get(`/api/log?ip=${encodeURIComponent(currentIP)}&since=${lastSeq}`);
     const ev = d.events||[];
     if(ev.length){ logEvents=logEvents.concat(ev).slice(-300); lastSeq=d.latest; renderLog(); }
+    flowRows=d.flows||[]; renderFlows(d.capture_running,d.capture_iface,d.capture_error);
   }catch(e){}
+}
+
+function renderFlows(captureRunning=true,captureIface="",captureError=""){
+  const box=document.getElementById("flowList"), hint=document.getElementById("flowHint");
+  if(!box) return;
+  if(hint) hint.textContent=inspecting?(captureError?"error de captura":captureRunning?`capturando${captureIface?" en "+captureIface:""}`:"captura no disponible"):(flowRows.length?"ultima sesion":"activa Inspeccionar");
+  if(!currentIP){ box.innerHTML='<div class="empty">El dispositivo esta ausente.</div>'; return; }
+  if(!flowRows.length){
+    const message=captureError?`Captura detenida: ${NS.esc(captureError)}. Comprueba Npcap y ejecuta NetScope como administrador.`:inspecting?'Esperando trafico. Abre una app o pagina desde el dispositivo.':'Activa "Inspeccionar" y genera trafico desde el dispositivo.';
+    box.innerHTML=`<div class="empty">${message}</div>`;
+    return;
+  }
+  box.innerHTML=flowRows.map(flow=>{
+    const peer=flow.peer_host||flow.peer_ip||"-";
+    const endpoint=flow.port?`${peer}:${flow.port}`:peer;
+    const scope=flow.peer_local?'<span class="flow-scope local">LAN</span>':'<span class="flow-scope">Internet</span>';
+    return `<div class="flow-row"><span class="flow-peer"><b>${NS.esc(endpoint)}</b>${scope}${flow.peer_host?`<small class="num">${NS.esc(flow.peer_ip)}</small>`:""}</span><span class="flow-proto">${NS.esc(flow.proto)}</span><span class="flow-up num">${NS.fmt(flow.sent_bytes)}</span><span class="flow-down num">${NS.fmt(flow.recv_bytes)}</span><span class="num">${flow.packets||0}</span><span class="num">${NS.hora(flow.last_seen)}</span></div>`;
+  }).join("");
 }
 
 function renderLog(){
@@ -129,7 +153,7 @@ function renderLog(){
 
 async function clearLog(){
   if(currentIP) await NS.post("/api/log/reset",{ip:currentIP});
-  lastSeq=0; logEvents=[]; renderLog();
+  lastSeq=0; logEvents=[]; flowRows=[]; renderLog(); renderFlows();
 }
 
 async function saveName(){
