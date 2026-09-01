@@ -10,10 +10,23 @@ Usa una BD SQLite temporal (no toca netscope.db).
 import os
 import sys
 import tempfile
+import atexit
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import store, identity  # noqa: E402
+
+_temp_paths = []
+
+
+@atexit.register
+def _cleanup_temp_dbs():
+    for path in _temp_paths:
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.remove(path + suffix)
+            except FileNotFoundError:
+                pass
 
 
 def _fresh_db():
@@ -22,6 +35,7 @@ def _fresh_db():
     os.remove(path)  # que lo cree el esquema
     store.DB = path
     store.init()
+    _temp_paths.append(path)
     return path
 
 
