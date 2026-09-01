@@ -10,6 +10,7 @@
     <label class="search-field"><span aria-hidden="true">⌕</span><input id="deviceSearch" type="search" placeholder="Buscar nombre, IP, MAC o fabricante" autocomplete="off"></label>
     <select id="deviceFilter" class="device-select" aria-label="Filtrar dispositivos">
       <option value="all">Todos</option><option value="online">Conectados</option><option value="offline">Ausentes</option><option value="unknown">Desconocidos</option><option value="trusted">Confiables</option><option value="unnamed">Sin nombre</option>
+      <optgroup label="Tipo"><option value="type:router">Routers</option><option value="type:phone">Celulares</option><option value="type:tablet">Tablets</option><option value="type:computer">Computadores</option><option value="type:camera">Camaras</option><option value="type:printer">Impresoras</option><option value="type:tv">TV / streaming</option><option value="type:console">Consolas</option><option value="type:iot">IoT</option></optgroup>
     </select>
     <select id="deviceSort" class="device-select" aria-label="Ordenar dispositivos">
       <option value="ip">Ordenar: IP</option><option value="name">Ordenar: nombre</option><option value="traffic">Ordenar: tráfico</option><option value="last_seen">Ordenar: última vez</option><option value="vendor">Ordenar: fabricante</option>
