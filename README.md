@@ -25,14 +25,14 @@ cómo se comporta cada dispositivo, en casa o en la empresa.
 
 | Función | Descripción |
 |---|---|
-| **Árbol de la red** | El router como raíz y cada dispositivo como rama, con nombre, fabricante, IP y MAC. |
+| **Árbol de la red** | El router como raíz y cada dispositivo como rama, con icono por categoría, marca, nombre, IP y MAC. |
 | **Inventario de dispositivos** | Busca, filtra y ordena equipos conectados o ausentes; muestra tipo estimado, tráfico, confianza y última vez visto. |
 | **Identidad estable** | Un equipo físico = una identidad, aunque rote su MAC (privacidad de iOS/Android). La MAC es solo una señal más, junto a nombre, huella DHCP, SO y puertos; cada una con un peso. Ver «Cómo funciona». |
-| **Nombres reales** | Combina mDNS/Bonjour, DNS inverso, NetBIOS y fabricante (OUI) para identificar cada equipo. |
+| **Nombres reales** | Combina mDNS/Bonjour, DNS inverso, NetBIOS, UPnP/SSDP y fabricante (OUI) para identificar cada equipo. |
 | **Escaneo profundo** | Con `nmap`: sistema operativo, puertos abiertos y servicio/versión de cada equipo. |
 | **Tráfico por dispositivo** | Bytes y paquetes en vivo, con barras de subida y bajada. |
 | **Gráfica de tráfico** | Curva suavizada con escala vertical en MB/s y lecturas cada 0,5 segundos. |
-| **Intercepción selectiva** | Ver todo el tráfico de un equipo elegido y a qué dominios habla. |
+| **Intercepción selectiva** | Ver flujos TCP/UDP, bytes enviados/recibidos y los dominios con los que habla un equipo elegido. |
 | **Autodetección del sistema** | Reconoce el SO al arrancar y avisa de permisos y dependencias que falten. |
 | **Info Wi-Fi** | Nombre de red (SSID), señal, canal y banda de la red a la que estás conectado. |
 | **Test de velocidad** | Latencia, descarga y subida con progreso, cancelación, jitter e historial local de mediciones. |
@@ -156,9 +156,10 @@ verla.
 ## Cómo funciona
 
 ### Descubrimiento e identificación
-Hace un **ARP scan** del segmento de red para encontrar todo lo conectado, y
-luego resuelve el nombre de cada equipo por orden: mDNS/Bonjour → DNS inverso →
-NetBIOS → fabricante por MAC.
+Hace un **ARP scan** del segmento y lo combina con la tabla de vecinos del
+sistema para encontrar equipos activos, además de incluir el propio computador.
+Luego resuelve nombre y metadatos mediante mDNS/Bonjour, DNS inverso, NetBIOS,
+UPnP/SSDP y fabricante por MAC.
 
 Cada observación se funde en una **identidad**: la verdad persistente no es la
 MAC (los móviles la rotan por privacidad) sino la combinación de señales —
@@ -187,8 +188,9 @@ Es por equipo (no toda la red de golpe) porque es un escaneo pesado.
 La página **Dispositivos** combina los equipos detectados con el historial local.
 Permite buscar por nombre, IP, MAC o fabricante, filtrar por estado y ordenar
 por IP, nombre, tráfico, última conexión o fabricante. El tipo se estima de
-forma conservadora usando nombres y fabricantes conocidos: cámara, celular,
-computador, router, impresora, TV/consola u otro dispositivo.
+forma conservadora usando nombres, fabricante, modelo, sistema y datos UPnP:
+router, celular, tablet, computador, cámara, impresora, TV/streaming, consola,
+altavoz, wearable, equipo de red, IoT u otro dispositivo.
 
 Al abrir un equipo se muestra su identidad (con **las señales que la sostienen** y
 su confianza), estado, tráfico en vivo, una mini-gráfica de tráfico de los últimos
@@ -203,12 +205,15 @@ de internet).
 
 ### Log de conexiones y enlaces
 En la página de cada dispositivo hay un **log en vivo** de a dónde habla, que no
-parpadea (va agregando líneas) y tiene botón **Limpiar**. Captura desde tres
-fuentes:
+parpadea (va agregando líneas) y tiene botón **Limpiar**. Combina varias fuentes:
+
+- **Flujos** — destino, protocolo, puerto, paquetes y bytes enviados/recibidos,
+  aunque el contenido esté cifrado.
 
 - **DNS** — dominios que el equipo resuelve.
 - **SNI** — nombre del servidor en el handshake TLS (más fiable que DNS).
 - **HTTP** — URL completa, solo para el poco tráfico sin cifrar.
+- **QUIC** — conexiones HTTP/3 cifradas sobre UDP.
 
 > **Límite real:** con **HTTPS la ruta (`/loquesea`) va cifrada** y no se puede
 > ver; lo máximo es el dominio. La URL completa solo aparece en tráfico HTTP
