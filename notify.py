@@ -7,6 +7,7 @@ avisar cuando aparece un dispositivo desconocido en la red.
 
 import urllib.parse
 import urllib.request
+from html import escape
 
 from core import store
 
@@ -19,7 +20,9 @@ def send_telegram(token, chat_id, text):
         data = urllib.parse.urlencode({
             "chat_id": chat_id, "text": text, "parse_mode": "HTML"
         }).encode()
-        urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=6)
+        with urllib.request.urlopen(
+                urllib.request.Request(url, data=data), timeout=6):
+            pass
         return True
     except Exception:
         return False
@@ -35,7 +38,9 @@ def notify_new_device(name, ip, vendor):
     token = store.get_setting("tg_token")
     chat = store.get_setting("tg_chat")
     text = (f"\U0001F6A8 <b>NetScope</b>\nNuevo dispositivo en la red\n"
-            f"Nombre: {name or '(sin nombre)'}\nIP: {ip}\nFabricante: {vendor or '-'}")
+            f"Nombre: {escape(str(name or '(sin nombre)'))}\n"
+            f"IP: {escape(str(ip))}\n"
+            f"Fabricante: {escape(str(vendor or '-'))}")
     send_telegram(token, chat, text)
 
 
