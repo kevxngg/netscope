@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import app as app_module
 import fingerprint
+import mitm
 import scanner
 from core import identity, store
 from sniffer import TrafficMonitor
@@ -169,6 +170,21 @@ class RegressionTests(unittest.TestCase):
         facts = store.facts_of(device["identity_id"])
         self.assertEqual(facts["manufacturer"], "Samsung")
         self.assertEqual(facts["model_name"], "Smart TV")
+
+    def test_windows_blocker_manages_firewall_rules(self):
+        class Result:
+            returncode = 0
+
+        blocker = mitm.Blocker()
+        with patch.object(mitm.platform, "system", return_value="Windows"), \
+                patch.object(mitm.subprocess, "run", return_value=Result()) as run:
+            self.assertTrue(blocker._install_drop_rule("192.168.1.40"))
+            self.assertTrue(blocker.protection("192.168.1.40")["firewall"])
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertTrue(any("dir=in" in command for command in commands))
+            self.assertTrue(any("dir=out" in command for command in commands))
+            blocker._remove_drop_rule("192.168.1.40")
+            self.assertFalse(blocker.protection("192.168.1.40")["firewall"])
 
 
 if __name__ == "__main__":
