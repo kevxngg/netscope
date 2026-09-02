@@ -134,7 +134,7 @@ function renderFlows(captureRunning=true,captureIface="",captureError=""){
     box.innerHTML=`<div class="empty">${message}</div>`;
     return;
   }
-  box.innerHTML=flowRows.map(flow=>{
+  box.innerHTML=[...flowRows].sort((a,b)=>(b.last_seen||0)-(a.last_seen||0)).map(flow=>{
     const peer=flow.peer_host||flow.peer_ip||"-";
     const endpoint=flow.port?`${peer}:${flow.port}`:peer;
     const scope=flow.peer_local?'<span class="flow-scope local">LAN</span>':'<span class="flow-scope">Internet</span>';
@@ -148,7 +148,7 @@ function renderLog(){
   const box=document.getElementById("log");
   if(!currentIP){ box.innerHTML='<div class="log-empty">Equipo ausente: sin captura en vivo.</div>'; return; }
   if(!events.length){ box.innerHTML='<div class="log-empty">Activa "Inspeccionar" para capturar a dónde habla este equipo.</div>'; return; }
-  box.innerHTML=events.map(e=>`<div class="row"><span class="time num">${NS.hora(e.ts)}</span><span class="kind ${e.kind}">${e.kind}</span><span class="val">${NS.esc(e.value)}</span></div>`).join("");
+  box.innerHTML=[...events].reverse().map(e=>`<div class="row"><span class="time num">${NS.hora(e.ts)}</span><span class="kind ${e.kind}">${e.kind}</span><span class="val">${NS.esc(e.value)}</span></div>`).join("");
 }
 
 async function clearLog(){
@@ -178,6 +178,7 @@ async function toggleBlock(){
   const url = blocked?"/api/block/stop":"/api/block/start";
   const d = await NS.post(url,{identity_id:ID, ip:currentIP});
   if(!d.ok){ alert("Bloqueo: "+(d.error||"error")); return; }
+  if(!blocked&&d.warning) alert("Bloqueo activo. "+d.warning);
   blocked = (d.blocked||[]).includes(currentIP); updateBlockBtn();
 }
 
