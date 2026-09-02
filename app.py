@@ -710,7 +710,12 @@ def api_block_start():
             if iid:
                 store.record_event(SITE, int(iid), "bloqueo",
                                    detail=f"bloqueado · {ip}", severity="warn")
+        protection = blocker.protection(ip)
         return jsonify({"ok": ok, "blocked": blocker.list_targets(),
+                        "protection": protection,
+                        "warning": (None if protection.get("firewall") else
+                                    protection.get("error") or
+                                    "bloqueo ARP alternativo: verifica el corte en el dispositivo"),
                         "error": None if ok else "no se pudo resolver la MAC"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -731,7 +736,9 @@ def api_block_stop():
 
 @app.route("/api/block/status")
 def api_block_status():
-    return jsonify({"blocked": blocker.list_targets()})
+    targets = blocker.list_targets()
+    return jsonify({"blocked": targets,
+                    "protection": {ip: blocker.protection(ip) for ip in targets}})
 
 
 @app.route("/api/export/devices.csv")
