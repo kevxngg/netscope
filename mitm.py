@@ -389,14 +389,11 @@ interceptor = Interceptor()
 # =========================================================================== #
 class Blocker:
     """
-    Bloquea el acceso a internet de un equipo por ARP spoofing "agujero negro":
-    le dice al objetivo que el router esta en una MAC INEXISTENTE, asi sus tramas
-    al router se pierden en el switch. Se revierte al desbloquear o cerrar.
-
-    Antes se apoyaba en apagar el reenvio de IP del sistema; eso chocaba con la
-    intercepcion (que lo necesita ENCENDIDO) y en Windows a veces exige reiniciar.
-    Con el agujero negro el bloqueo es independiente del reenvio: puedes bloquear
-    un equipo y estar inspeccionando otro a la vez sin que se pisen.
+    Bloquea un equipo combinando una regla por IP en el firewall con ARP/NDP.
+    El firewall corta el trafico aunque el reenvio necesario para inspeccionar
+    otros equipos este activo. ARP/NDP fuerza que el objetivo pase por este host
+    y sirve de alternativa en sistemas donde no se pudo instalar la regla.
+    Todo se revierte al desbloquear o cerrar.
     """
     def __init__(self):
         self.targets = {}       # ip -> mac
@@ -404,11 +401,78 @@ class Blocker:
         self.gateway_mac = None
         self.gateway6 = ""      # link-local IPv6 del router (si la red tiene IPv6)
         self.my_mac = ""
-        self.sink_mac = BLACKHOLE_MAC
         self.iface = None
         self._running = False
         self._thread = None
         self._lock = threading.Lock()
+        self._drop_rules = set()  # IPs protegidas ademas por firewall del sistema
+        self._last_error = ""
+
+    @staticmethod
+    def _rule_name(ip):
+        return "NetScope Block " + ip
+
+    def _install_drop_rule(self, ip):
+        """Corta el trafico reenviado en el firewall, sin depender solo de que
+        el punto de acceso acepte una MAC Ethernet ficticia."""
+        system = platform.system()
+        try:
+            if system == "Windows":
+                name = self._rule_name(ip)
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "delete", "rule",
+                     f"name={name}"], capture_output=True, timeout=8,
+                    creationflags=_NO_WINDOW)
+                commands = (
+                    ["netsh", "advfirewall", "firewall", "add", "rule",
+                     f"name={name}", "dir=in", "action=block",
+                     f"remoteip={ip}", "profile=any", "enable=yes"],
+                    ["netsh", "advfirewall", "firewall", "add", "rule",
+                     f"name={name}", "dir=out", "action=block",
+                     f"remoteip={ip}", "profile=any", "enable=yes"],
+                )
+                for command in commands:
+                    result = subprocess.run(command, capture_output=True, timeout=8,
+                                            creationflags=_NO_WINDOW)
+                    if result.returncode != 0:
+                        raise RuntimeError("Windows Firewall rechazo la regla")
+            elif system == "Linux":
+                for direction in ("-s", "-d"):
+                    check = ["iptables", "-C", "FORWARD", direction, ip,
+                             "-j", "DROP"]
+                    if subprocess.run(check, capture_output=True, timeout=5).returncode:
+                        add = ["iptables", "-I", "FORWARD", "1", direction,
+                               ip, "-j", "DROP"]
+                        if subprocess.run(add, capture_output=True, timeout=5).returncode:
+                            raise RuntimeError("iptables rechazo la regla")
+            else:
+                return False
+        except Exception as exc:
+            self._last_error = str(exc)[:300]
+            self._remove_drop_rule(ip)
+            return False
+        with self._lock:
+            self._drop_rules.add(ip)
+        self._last_error = ""
+        return True
+
+    def _remove_drop_rule(self, ip):
+        system = platform.system()
+        try:
+            if system == "Windows":
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "delete", "rule",
+                     f"name={self._rule_name(ip)}"], capture_output=True,
+                    timeout=8, creationflags=_NO_WINDOW)
+            elif system == "Linux":
+                for direction in ("-s", "-d"):
+                    subprocess.run(
+                        ["iptables", "-D", "FORWARD", direction, ip,
+                         "-j", "DROP"], capture_output=True, timeout=5)
+        except Exception:
+            pass
+        with self._lock:
+            self._drop_rules.discard(ip)
 
     def _setup(self):
         from scapy.all import conf, get_if_hwaddr
@@ -422,10 +486,6 @@ class Blocker:
             self.my_mac = (get_if_hwaddr(iface) or "").lower()
         except Exception:
             self.my_mac = ""
-        # Usa una MAC localmente administrada distinta de la nuestra. Asi el
-        # bloqueo no depende del estado GLOBAL del reenvio IP y puede convivir
-        # con una inspeccion activa sin que el SO reenvie los paquetes bloqueados.
-        self.sink_mac = BLACKHOLE_MAC
         self.gateway6 = _gateway6()   # '' si la red no tiene IPv6
 
     def _victim6(self, mac):
@@ -447,18 +507,23 @@ class Blocker:
             tampoco le llegan.
         Envenena IPv4 (ARP) e IPv6 (NDP), porque hoy gran parte del trafico
         (YouTube, Google...) va por IPv6 y ARP no lo toca."""
-        esrc = None if self.sink_mac == self.my_mac else BLACKHOLE_MAC
+        # Si hay firewall, dirigir IPv4 a nuestra MAC es mucho mas fiable en
+        # Wi-Fi: el AP no descarta la trama por usar una MAC de origen inventada.
+        with self._lock:
+            firewall_drop = ip in self._drop_rules
+        sink4 = self.my_mac if firewall_drop and self.my_mac else BLACKHOLE_MAC
+        esrc = self.my_mac or None
         _send_arp(iface=self.iface, ether_src=esrc, op=2,
-                  pdst=ip, hwdst=mac, psrc=self.gateway_ip, hwsrc=self.sink_mac)
+                  pdst=ip, hwdst=mac, psrc=self.gateway_ip, hwsrc=sink4)
         _send_arp(iface=self.iface, ether_src=esrc, op=2,
                   pdst=self.gateway_ip, hwdst=self.gateway_mac,
-                  psrc=ip, hwsrc=self.sink_mac)
+                  psrc=ip, hwsrc=sink4)
         if self.gateway6:
             v6 = self._victim6(mac)
             if v6:
                 try:
                     _send_na(self.iface, v6, mac, self.gateway6,
-                             self.sink_mac, self.gateway6)
+                             BLACKHOLE_MAC, self.gateway6)
                 except Exception:
                     pass
 
@@ -487,6 +552,7 @@ class Blocker:
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
             atexit.register(self.stop)
+        self._install_drop_rule(ip)
         with self._lock:
             self.targets[ip] = mac
         # rafaga inmediata fuerte: el corte se nota al instante
@@ -501,6 +567,7 @@ class Blocker:
     def unblock(self, ip):
         with self._lock:
             mac = self.targets.pop(ip, None)
+        self._remove_drop_rule(ip)
         if mac and self.gateway_ip and self.gateway_mac:
             for _ in range(6):
                 try:
@@ -515,6 +582,12 @@ class Blocker:
     def list_targets(self):
         with self._lock:
             return list(self.targets.keys())
+
+    def protection(self, ip=None):
+        with self._lock:
+            protected = sorted(self._drop_rules)
+        return {"method": "firewall+arp" if ip in protected else "arp",
+                "firewall": ip in protected, "error": self._last_error}
 
     def _loop(self):
         # Re-envenena a alta frecuencia (cada 0.5s) para que el equipo no tenga
@@ -536,6 +609,8 @@ class Blocker:
         with self._lock:
             items = list(self.targets.items())
             self.targets.clear()
+        for ip, _ in items:
+            self._remove_drop_rule(ip)
         if self.gateway_ip and self.gateway_mac:
             for ip, mac in items:
                 for _ in range(6):
